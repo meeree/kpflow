@@ -64,6 +64,18 @@ class Operator(ABC):
     def __matmul__(self, other):
         return ComposedOperator(self, other)
 
+def check_adjoint(A, trials=5, rng=None):
+    rng = np.random.default_rng() if rng is None else rng
+    m, n = A.shape
+    rel_err = []
+    for i in range(trials):
+        x = rng.standard_normal(n) + 1j*rng.standard_normal(n) if np.iscomplexobj(A.matvec(np.ones(n))) else rng.standard_normal(n)
+        y = rng.standard_normal(m) + 1j*rng.standard_normal(m) if np.iscomplexobj(A.matvec(np.ones(n))) else rng.standard_normal(m)
+        lhs = np.vdot(A.matvec(x), y)      # <Ax, y>
+        rhs = np.vdot(x, A.rmatvec(y))     # <x, A* y>
+        rel_err.append(abs(lhs - rhs) / (abs(lhs) + abs(rhs) + 1))
+    return np.stack(rel_err)
+
 class AveragedOperator(Operator):
     def __init__(self, op, true_shape):
         # Create an operator that takes in inputs that are identical along one or multiple axes. 

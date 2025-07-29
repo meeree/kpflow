@@ -4,6 +4,7 @@ import numpy as np
 from torch.func import vjp, jvp, functional_call
 from functools import partial
 
+from .lyap_utils import compute_jacobians
 from .op_common import Operator
 
 # Utility function
@@ -27,7 +28,7 @@ class PropagationOperator_LinearForm(Operator):
         inputs_flat = inputs.reshape((-1, inputs.shape[-1]))
         model_f = partial(model_f, inputs_flat)
         self.jacs = compute_jacobians(model_f, hidden, to_np = False) # [B, T, H, H]
-        self.Qs, self.Rs, self.Us = fundamental_matrix(self.jacs)
+#        self.Qs, self.Rs, self.Us = fundamental_matrix(self.jacs)
 
     @torch.no_grad
     def __call__(self, q):
@@ -45,7 +46,7 @@ class PropagationOperator_LinearForm(Operator):
         for t in range(q.shape[1]-2, -1, -1):
             res.append(q_dev[:, t] + self.jacs[:, t+1].swapaxes(-2,-1) @ res[-1])
 
-        return torch.stack(res, 1)[...,0][:, ::-1] # Reverse time.
+        return torch.stack(res, 1)[...,0].flip(1) # Reverse time.
 
 ## Implements P P^T in a stable efficient way.
 #class PropagationGramOperator(Operator):

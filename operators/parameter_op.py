@@ -30,7 +30,7 @@ class JThetaOperator(Operator):
 
     @torch.no_grad
     def __call__(self, q):
-        # Input should be a DICTIONARY of named parameters, e.g. (dict(model.named_parameters()),).
+        # Input should be a DICTIONARY of named parameters, e.g. dict(model.named_parameters()).
         # a tuple of length one with the dictionary is also accepted.
         inp = (q,) if isinstance(q, dict) else q
         return jvp(self.model_f, (self.params,), inp)[1].reshape(self.shape)  # [B, T, H]
