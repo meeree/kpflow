@@ -16,6 +16,11 @@ def load_checkpoints(root):
     checkpoints = [root + 'checkpoints/' + os.path.basename(p) for p in checkpoints]
     return checkpoints, iteration
 
+def cos_similarity(x, y):
+    nmx = (x*x).sum() ** .5
+    nmy = (y*y).sum() ** .5
+    return (x * y).sum() / (nmx * nmy)
+
 def ping_dir(directory, clear = False):
     # Check if directory exists and make if not. If clear flag is True, clear any contents of the directory if it exists.
     import os

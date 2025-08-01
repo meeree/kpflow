@@ -39,13 +39,16 @@ class NeuroGymWrapper():
 class CustomTaskWrapper():
     def __init__(self, task, batch_size, use_noise = True, shuffle = True, **kwargs):
         import torch
-        tasks_avail = ['flip_flop', 'memory_pro', 'mix_multi_tasks', 'cont_integration']
+        tasks_avail = ['flip_flop', 'memory_pro', 'memory_pro_oh', 'mix_multi_tasks', 'cont_integration']
         if task == 'flip_flop':
             from custom_tasks import flip_flop
             self.task = flip_flop
         elif task == 'memory_pro':
             from custom_tasks import memory_pro
             self.task = memory_pro 
+        elif task == 'memory_pro_oh':
+            from custom_tasks import memory_pro_oh
+            self.task = memory_pro_oh 
         elif task == 'mix_multi_tasks':
             from custom_tasks import mix_multi_tasks
             self.task = mix_multi_tasks

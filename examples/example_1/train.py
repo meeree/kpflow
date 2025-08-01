@@ -20,25 +20,33 @@ def parse_arguments(parser = None):
     parser.add_argument('--save_freq', default=100, type = int, help='Frequency (iterations) to save checkpoints at')
     parser.add_argument('--lr', default = 1e-3, type = float, help = 'Learning rate')
     parser.add_argument('--niter', default = 10000, type = float, help = '# of Iterations for GD')
+    parser.add_argument('--init_level', type=float, default=0, help='initialization level for xavier uniform weights')
+    parser.add_argument('--save_dir', type=str, default='', help='Directory to save in. Will be set if empty.')
     return parser.parse_args()
 
-if __name__ == '__main__':
-    args = parse_arguments()
-
+def main(args):
     task = CustomTaskWrapper(args.task_str, 200, use_noise = True, n_samples = 5000, T = 90)
     inputs, targets = task()
+    n_in, n_out = inputs.shape[-1], targets.shape[-1]
 
     losses_all = []
 
     device = 'cuda'
 
     # Initialize model and move to appropriate device
-    model = Model(input_size = 3, output_size = 3, rnn=nn.GRU if args.model == 'gru' else nn.RNN, hidden_size = 256).to(device)
+    model = Model(input_size = n_in, output_size = n_out, rnn=nn.GRU if args.model == 'gru' else nn.RNN, hidden_size = 256).to(device)
+
+    # Scale inital weights.
+    for name, param in model.named_parameters():
+        if name == 'rnn.weight_hh_l0':
+            param.data = param.data * args.init_level
+    model.rnn.flatten_parameters()
+
     optim = torch.optim.Adam(model.parameters(), lr = args.lr) 
     loss_fn = nn.MSELoss()
     losses = []
 
-    path = f'{args.task_str}_{args.model}/'
+    path = f'{args.task_str}_{args.model}_init={args.init_level}/' if not args.save_dir else args.save_dir
     ping_dir(path)
     ping_dir(f'{path}checkpoints/', clear = True)
 
@@ -69,7 +77,7 @@ if __name__ == '__main__':
         if itr % 20 == 0:
             losses.append(loss.item())
 
-        if done or itr % 100 == 0:
+        if done or itr % args.save_freq == 0:
             snapshot = {
                 'model' : model.state_dict(),
                 'optim' : optim.state_dict(), 
@@ -81,3 +89,6 @@ if __name__ == '__main__':
 
         if done:
             break
+
+if __name__ == '__main__':
+    main(parse_arguments())
