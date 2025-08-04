@@ -1,9 +1,9 @@
 from kpflow.tasks import CustomTaskWrapper
 from kpflow.analysis_utils import ping_dir, load_checkpoints, import_checkpoint, torch_to_np, np_to_torch, cos_similarity
 from kpflow.architecture import Model, get_cell_from_model
-from kpflow.operators.parameter_op import ParameterOperator, JThetaOperator
-from kpflow.operators.propagation_op import PropagationOperator_DirectForm, PropagationOperator_LinearForm
-from kpflow.operators.op_common import AveragedOperator, check_adjoint, Operator
+from kpflow.parameter_op import ParameterOperator, JThetaOperator
+from kpflow.propagation_op import PropagationOperator_DirectForm, PropagationOperator_LinearForm
+from kpflow.op_common import AveragedOperator, check_adjoint, Operator
 
 import torch
 from torch import nn
@@ -43,7 +43,7 @@ if __name__ == '__main__':
     task = CustomTaskWrapper(args.task_str, 200, use_noise = False, n_samples = 200, T = 90)
     inputs, targets = task()
     n_in, n_out = inputs.shape[-1], targets.shape[-1]
-    ang = np.arctan2(inputs[:, 0, 2], inputs[:, 0, 1])
+    ang = torch.arctan2(inputs[:, 0, 2], inputs[:, 0, 1]).detach().cpu().numpy()
 
     # Sort inputs based on angle for easier analysis later. 
     new_inds = np.argsort(ang)
@@ -82,7 +82,7 @@ if __name__ == '__main__':
         pcas.append(pca)
         proj_all.append(proj)
 
-        proj_w_out_all.append(model.Wout.weight.data @ pca.components_.T) # Project the output rows into the pca space.
+        proj_w_out_all.append(model.Wout.weight.data.detach().numpy() @ pca.components_.T) # Project the output rows into the pca space.
     proj_all, proj_w_out_all = np.stack(proj_all), np.stack(proj_w_out_all)
 
     effdims = []

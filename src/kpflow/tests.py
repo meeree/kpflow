@@ -17,7 +17,7 @@ def test_linearized_propagation(plot = False):
     # First, test on a linear ODE model, z_{n+1} = W * z_n + x(t). 
     # This has dynamics z_n = Phi(n, 0) z_0 + sum_{i=1}^n Phi(n, i) x_i,
     # where Phi(n, n0) = W^{n - n0}.
-    from operators.propagation_op import PropagationOperator_LinearForm as POLF
+    from .propagation_op import PropagationOperator_LinearForm as POLF
 
     B, T, H = 5, 20, 10 # Batch size, Timesteps, Hidden count.
     x = torch.randn(B, T, H) * 1e-3 # Inputs.
@@ -56,10 +56,10 @@ def test_linearized_propagation(plot = False):
     print(" ----- ")
 
 def test_operator_adjoints(plot = True, trials = 50):
-    from architecture import Model, get_cell_from_model
-    from operators.parameter_op import ParameterOperator, JThetaOperator
-    from operators.propagation_op import PropagationOperator_DirectForm, PropagationOperator_LinearForm
-    from operators.op_common import AveragedOperator, check_adjoint
+    from .architecture import Model, get_cell_from_model
+    from .parameter_op import ParameterOperator, JThetaOperator
+    from .propagation_op import PropagationOperator_DirectForm, PropagationOperator_LinearForm
+    from .op_common import AveragedOperator, check_adjoint
 
     # Test that the adjoint_call of the operators is indeed the adjoint, i.e. that 
     # <A x, y> = <x, A* y> for the parameter and propagation operators A.

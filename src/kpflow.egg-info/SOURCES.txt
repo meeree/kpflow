@@ -1,7 +1,0 @@
-README.md
-setup.py
-src/kpflow.egg-info/PKG-INFO
-src/kpflow.egg-info/SOURCES.txt
-src/kpflow.egg-info/dependency_links.txt
-src/kpflow.egg-info/requires.txt
-src/kpflow.egg-info/top_level.txt
