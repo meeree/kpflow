@@ -118,7 +118,6 @@ class TransposedOperator(Operator):
         return self.op(q)
 
 
-
 class FinalTimestepOperator(Operator):
     def __init__(self, op, full_shape):
         # Create an operator that takes the final time in forward call. In adjoint call it pads with zeros.

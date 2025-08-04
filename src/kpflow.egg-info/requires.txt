@@ -1,0 +1,9 @@
+matplotlib>=3.10.5
+neurogym>=1.0.3
+numpy>=2.3.2
+scikit_learn>=1.7.1
+scipy>=1.16.1
+setuptools>=75.1.0
+setuptools>=80.9.0
+torch>=2.4.0
+tqdm>=4.66.5
