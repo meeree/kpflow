@@ -1,9 +1,6 @@
-import sys
-sys.path.append('../../')
-
-from tasks import CustomTaskWrapper
-from analysis_utils import ping_dir
-from architecture import Model
+from kpflow.tasks import CustomTaskWrapper
+from kpflow.analysis_utils import ping_dir
+from kpflow.architecture import Model
 
 import torch
 from torch import nn

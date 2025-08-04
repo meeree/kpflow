@@ -5,10 +5,7 @@ import train
 import numpy as np
 from itertools import product
 from tqdm import tqdm
-
-import sys
-sys.path.append('../../')
-from analysis_utils import ping_dir
+from kpflow.analysis_utils import ping_dir
 
 # INHERTIS commandline arguments from train.py in addition to the ones below.
 parser = argparse.ArgumentParser(description='Training Sweep')

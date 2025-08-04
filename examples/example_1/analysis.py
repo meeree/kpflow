@@ -1,13 +1,9 @@
-import sys
-sys.path.append('../../')
-
-from tasks import CustomTaskWrapper
-from analysis_utils import ping_dir, load_checkpoints, import_checkpoint, torch_to_np, np_to_torch, cos_similarity
-from architecture import Model, get_cell_from_model
-from sklearn.decomposition import PCA
-from operators.parameter_op import ParameterOperator, JThetaOperator
-from operators.propagation_op import PropagationOperator_DirectForm, PropagationOperator_LinearForm
-from operators.op_common import AveragedOperator, check_adjoint, Operator
+from kpflow.tasks import CustomTaskWrapper
+from kpflow.analysis_utils import ping_dir, load_checkpoints, import_checkpoint, torch_to_np, np_to_torch, cos_similarity
+from kpflow.architecture import Model, get_cell_from_model
+from kpflow.operators.parameter_op import ParameterOperator, JThetaOperator
+from kpflow.operators.propagation_op import PropagationOperator_DirectForm, PropagationOperator_LinearForm
+from kpflow.operators.op_common import AveragedOperator, check_adjoint, Operator
 
 import torch
 from torch import nn
@@ -16,6 +12,7 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 import argparse
 from scipy.sparse.linalg import eigsh
+from sklearn.decomposition import PCA
 
 from tqdm import tqdm
 
