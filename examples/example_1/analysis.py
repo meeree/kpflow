@@ -14,24 +14,16 @@ import argparse
 from scipy.sparse.linalg import eigsh
 from sklearn.decomposition import PCA
 
+from common import project, plot_trajectories, compute_svs, set_mpl_defaults
+
 from tqdm import tqdm
 
 def parse_arguments(parser = None):
     parser = argparse.ArgumentParser(description='Analyze Model on Memory Pro Task') if parser is None else parser
     parser.add_argument('--model', default='gru', type = str, help='Model to use')
     parser.add_argument('--task_str', default = 'memory_pro', type = str, help = 'Task to train on. Options: memory_pro, flip_flop, context_integration')
+    parser.add_argument('--save_dir', default = '', type = str, help = 'Directory where checkpoints were saved. Optional.')
     return parser.parse_args()
-
-def set_mpl_defaults(fontsize = 13): # Fontsize etc
-    plt.rc('font', size=fontsize)          # controls default text sizes
-    plt.rc('axes', titlesize=fontsize)     # fontsize of the axes title
-    plt.rc('axes', labelsize=fontsize)    # fontsize of the x and y labels
-    plt.rc('xtick', labelsize=fontsize)    # fontsize of the tick labels
-    plt.rc('ytick', labelsize=fontsize)    # fontsize of the tick labels
-    plt.rc('legend', fontsize=fontsize)    # legend fontsize
-    plt.rc('figure', titlesize=fontsize)  # fontsize of the figure title
-    mpl.rcParams['mathtext.fontset']   = 'cm'        # use Computer Modern
-    mpl.rcParams['font.family']        = 'serif'     # make non‑math text serif
 
 if __name__ == '__main__':
     args = parse_arguments()
@@ -49,7 +41,7 @@ if __name__ == '__main__':
     new_inds = np.argsort(ang)
     inputs, targets, ang = inputs[new_inds], targets[new_inds], ang[new_inds]
 
-    filename = f'{args.task_str}_{args.model}'
+    filename = f'{args.task_str}_{args.model}' if args.save_dir == '' else args.save_dir
     checkpoints, gd_itr = load_checkpoints(filename)
     print(len(checkpoints), filename)
     print(f'Re-Evaluating {len(checkpoints)} Snapshots in {filename}...')
@@ -134,15 +126,6 @@ if __name__ == '__main__':
             plt.gca().set_ylabel('OUT2')
             plt.gca().set_zlabel('OUT3')
     plt.tight_layout()
-    
-    def compute_svs(op, inp_shape, ncomps, compute_vecs = False, tol = 1e-8):
-        op_sp = op.to_scipy(inp_shape, inp_shape, dtype = float, can_matmat = False)
-        if compute_vecs:
-            singular_vals, singular_vecs = eigsh(op_sp, k = ncomps, return_eigenvectors = True, tol = tol)
-            return singular_vals[::-1], singular_vecs[:, ::-1].T.reshape((-1, *inp_shape))
-
-        singular_vals = eigsh(op_sp, k = ncomps, return_eigenvectors = False, tol = tol)
-        return singular_vals[::-1]
 
     print('Beginning analysis with KP-Flow Operators...')
 
