@@ -26,7 +26,7 @@ class JThetaOperator(Operator):
             return functional_call(model_f, params, (x_flat, z_flat)) # Turn model into a functor accepting parameters as an argument.
 
         self.model_f = func_param_only
-        self.params = dict(model_f.named_parameters())
+        self.params = dict(model_f.to(dev).named_parameters())
 
     @torch.no_grad
     def __call__(self, q):

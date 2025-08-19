@@ -7,6 +7,18 @@ from time import perf_counter
 np_to_torch = lambda x: x if torch.is_tensor(x) else torch.from_numpy(x)
 torch_to_np = lambda x: x if not torch.is_tensor(x) else x.detach().cpu().numpy()
 
+def check_adjoint(A, trials=5, rng=None):
+    rng = np.random.default_rng() if rng is None else rng
+    m, n = A.shape
+    rel_err = []
+    for i in range(trials):
+        x = rng.standard_normal(n) + 1j*rng.standard_normal(n) if np.iscomplexobj(A.matvec(np.ones(n))) else rng.standard_normal(n)
+        y = rng.standard_normal(m) + 1j*rng.standard_normal(m) if np.iscomplexobj(A.matvec(np.ones(n))) else rng.standard_normal(m)
+        lhs = np.vdot(A.matvec(x), y)      # <Ax, y>
+        rhs = np.vdot(x, A.rmatvec(y))     # <x, A* y>
+        rel_err.append(abs(lhs - rhs) / (abs(lhs) + abs(rhs) + 1))
+    return np.stack(rel_err)
+
 def absolute_error(x, y):
     return np.abs(torch_to_np(x) - torch_to_np(y)).max()
 

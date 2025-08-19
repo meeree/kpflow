@@ -39,6 +39,22 @@ class Operator(ABC):
             # act on an object of shape (shape_flat, k) for some arbitrary k. Put this at start, assuming call and adjoint_call can accept something of shape (k, *shape).
             flat_matmat = lambda q_flat: torch_to_np(self(q_flat.T.reshape((-1, *shape))).reshape((-1, shape_flat))).T
             flat_rmatmat = lambda q_flat: torch_to_np(self.adjoint_call(q_flat.T.reshape((-1, *shape))).reshape((-1, shape_flat))).T
+            return LinearOperator((shape_out_flat, shape_flat), flat_action, rmatvec = flat_adjoint_action, matmat = flat_matmat, rmatmat = flat_rmatmat, dtype = dtype)
+        else:
+            # Not provided. Just do a bunch of matvecs.
+            def flat_matmat(q_mat):
+                # q_mat is shape (shape_flat, k).
+                ret = np.zeros((shape_out_flat, q_mat.shape[1]))
+                for i in range(q_mat.shape[1]):
+                    ret[:, i] = flat_action(q_mat[:, i])
+                return ret
+
+            def flat_rmatmat(q_mat):
+                # q_mat is shape (shape_out_flat, k).
+                ret = np.zeros((shape_flat, q_mat.shape[1]))
+                for i in range(q_mat.shape[1]):
+                    ret[:, i] = flat_adjoint_action(q_mat[:, i])
+                return ret
 
             return LinearOperator((shape_out_flat, shape_flat), flat_action, rmatvec = flat_adjoint_action, matmat = flat_matmat, rmatmat = flat_rmatmat, dtype = dtype)
 
@@ -63,18 +79,6 @@ class Operator(ABC):
 
     def __matmul__(self, other):
         return ComposedOperator(self, other)
-
-def check_adjoint(A, trials=5, rng=None):
-    rng = np.random.default_rng() if rng is None else rng
-    m, n = A.shape
-    rel_err = []
-    for i in range(trials):
-        x = rng.standard_normal(n) + 1j*rng.standard_normal(n) if np.iscomplexobj(A.matvec(np.ones(n))) else rng.standard_normal(n)
-        y = rng.standard_normal(m) + 1j*rng.standard_normal(m) if np.iscomplexobj(A.matvec(np.ones(n))) else rng.standard_normal(m)
-        lhs = np.vdot(A.matvec(x), y)      # <Ax, y>
-        rhs = np.vdot(x, A.rmatvec(y))     # <x, A* y>
-        rel_err.append(abs(lhs - rhs) / (abs(lhs) + abs(rhs) + 1))
-    return np.stack(rel_err)
 
 class AveragedOperator(Operator):
     def __init__(self, op, true_shape):
