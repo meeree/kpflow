@@ -19,8 +19,7 @@ torch_to_np = lambda x: x if not torch.is_tensor(x) else x.detach().cpu().numpy(
 # For an RNN, f(z,x) = -z + W sigma(z) + W_{in} x(t), the features are [x(t), sigma(z(t))].
 class PropagationOperator_LinearForm(Operator):
     def __init__(self, model_f, inputs, hidden, dev = 'cpu'):
-        super().__init__()
-        self.dev = dev
+        super().__init__(hidden.shape, hidden.shape, dev)
 
         inputs = np_to_torch(inputs).to(dev)
         hidden = np_to_torch(hidden).to(dev)
@@ -92,8 +91,7 @@ class PropagationOperator_LinearForm(Operator):
 
 class PropagationOperator_DirectForm(Operator):
     def __init__(self, model_f, x, hidden, h0 = None, dev = 'cpu'):
-        super().__init__()
-        self.dev = dev
+        super().__init__(hidden.shape, hidden.shape, dev)
         self.model_f = model_f.to(dev)
         self.x = np_to_torch(x).to(dev) # [B, T, Nin]
         self.h0 = None if h0 is None else np_to_torch(h0).to(dev)

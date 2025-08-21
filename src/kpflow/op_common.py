@@ -3,62 +3,61 @@ from abc import ABC, abstractmethod
 import numpy as np
 import math
 import torch
+from math import prod
 
 np_to_torch = lambda x: x if torch.is_tensor(x) else torch.from_numpy(x)
 torch_to_np = lambda x: x if not torch.is_tensor(x) else x.detach().cpu().numpy()
 
 class Operator(ABC):
-    def __init__(self):
-        self.self_adjoint = False # By default, assume not self adjoint.
+    def __init__(self, shape_in, shape_out, dev = 'cpu', self_adjoint = False):
+        self.shape_in = shape_in
+        self.shape_out = shape_out
+        self.dev = dev
+        self.self_adjoint = self_adjoint
 
-    # The input q is shape [..., B, T, H] = [..., batch count, timesteps, hidden count]. Compute action, which has same shape as q.
+    # shape_in -> shape_out
     @abstractmethod
     def __call__(self, q):
-        pass
+        raise Exception('Call is undefined')
 
+    # shape_out -> shape_in
     def adjoint_call(self, q): # If not self adjoint, need to set this by hand.
         if self.self_adjoint:
             return self(q) # rmatvec = matvec ;)
         raise Exception('Adjoint call is undefined')
 
+    # [D, *shape_in] -> [D, *shape_out]
+    def batched_call(self, q_batch):
+        return torch.vmap(self)(q_batch)
+
+    # [D, *shape_out] -> [D, *shape_in]
+    def batched_adjoint_call(self, q_batch):
+        return torch.vmap(self.adjoint_call)(q_batch)
+
+    # Get a version of the operator where shape_in, shape_out are flattened.
+    def flatten(self):
+        return FlatWrapper(self) 
+
+    def to_numpy(self):
+        return NumpyWrapper(self)
+
     def rayleigh_coef(self, q):
         Kq = self(q) # [..., B, T, H]
         return (Kq * q).sum((-3, -2, -1)) / (q * q).sum((-3, -2, -1))
 
-    def to_scipy(self, shape, shape_out = None, dtype = float, can_matmat = False):
+    def to_scipy(self, dtype = float):
         # Convert to a scipy LinearOperator. Shape should be the shape of a typical input to __call__.
+        # Note the original operator works in pytorch, allowing for cuda, while the new one will be in numpy.
         from scipy.sparse.linalg import LinearOperator
-
-        shape_flat = math.prod(shape)
-        shape_out = shape_out if shape_out is not None else shape
-        shape_out_flat = math.prod(shape_out) 
-        flat_action = lambda q_flat: torch_to_np(self(q_flat.reshape(shape)).flatten())
-        flat_adjoint_action = lambda q_flat: torch_to_np(self.adjoint_call(q_flat.reshape(shape_out)).flatten()) # Returns None if not defined explicitly in inherited class and not self adjoint.
-
-        if can_matmat:
-            # act on an object of shape (shape_flat, k) for some arbitrary k. Put this at start, assuming call and adjoint_call can accept something of shape (k, *shape).
-            flat_matmat = lambda q_flat: torch_to_np(self(q_flat.T.reshape((-1, *shape))).reshape((-1, shape_flat))).T
-            flat_rmatmat = lambda q_flat: torch_to_np(self.adjoint_call(q_flat.T.reshape((-1, *shape))).reshape((-1, shape_flat))).T
-            return LinearOperator((shape_out_flat, shape_flat), flat_action, rmatvec = flat_adjoint_action, matmat = flat_matmat, rmatmat = flat_rmatmat, dtype = dtype)
-        else:
-            # Not provided. Just do a bunch of matvecs.
-            def flat_matmat(q_mat):
-                # q_mat is shape (shape_flat, k).
-                ret = np.zeros((shape_out_flat, q_mat.shape[1]))
-                for i in range(q_mat.shape[1]):
-                    ret[:, i] = flat_action(q_mat[:, i])
-                return ret
-
-            def flat_rmatmat(q_mat):
-                # q_mat is shape (shape_out_flat, k).
-                ret = np.zeros((shape_flat, q_mat.shape[1]))
-                for i in range(q_mat.shape[1]):
-                    ret[:, i] = flat_adjoint_action(q_mat[:, i])
-                return ret
-
-            return LinearOperator((shape_out_flat, shape_flat), flat_action, rmatvec = flat_adjoint_action, matmat = flat_matmat, rmatmat = flat_rmatmat, dtype = dtype)
-
-        return LinearOperator((shape_out_flat, shape_flat), flat_action, rmatvec = flat_adjoint_action, dtype = dtype)
+        op_np_flat = self.flatten().to_numpy()
+        matmat = lambda q_vec : np.moveaxis(op_np_flat.batched_call(np.moveaxis(q_vec, -1, 0)), 0, -1) # scipy expects columns for batching, while my batching uses first dim.
+        rmatmat = lambda q_vec : np.moveaxis(op_np_flat.batched_adjoint_call(np.moveaxis(q_vec, -1, 0)), 0, -1) 
+        return LinearOperator(
+            (op_np_flat.shape_out, op_np_flat.shape_in),
+            matvec = op_np_flat, rmatvec = op_np_flat.adjoint_call, 
+            matmat = matmat, rmatmat = rmatmat,
+            dtype = dtype
+        )
 
     @staticmethod
     def effrank(singular_vals, thresh):
@@ -80,10 +79,49 @@ class Operator(ABC):
     def __matmul__(self, other):
         return ComposedOperator(self, other)
 
+# Takes in flattened shape_in, shape_out.
+class FlatWrapper(Operator):
+    def __init__(self, op):
+        shape_in_flat, shape_out_flat = prod(op.shape_in), prod(op.shape_out)
+        super().__init__(shape_in_flat, shape_out_flat, op.dev, op.self_adjoint)
+        self.op = op
+
+    def __call__(self, q):
+        # [shape_in_flat] -> [self.op.shape_in] -> call -> [self.op.shape_out] -> [shape_out_flat].
+        non_flat = self.op(q.reshape(self.op.shape_in))
+        return non_flat.reshape(self.shape_out)
+
+    def adjoint_call(self, q):
+        # [shape_out_flat] -> [self.op.shape_out] -> call -> [self.op.shape_in] -> [shape_in_flat].
+        non_flat = self.op.adjoint_call(q.reshape(self.op.shape_out))
+        return non_flat.reshape(self.shape_in)
+
+# Takes inputs in numpy and puts them into torch, then back into torch after calls.
+class NumpyWrapper(Operator):
+    def __init__(self, op):
+        super().__init__(op.shape_in, op.shape_out, op.dev, op.self_adjoint)
+        self.op = op
+
+    def __call__(self, q):
+        with torch.no_grad(): # Using numpy so why use grads.
+            torch_res = self.op(torch.from_numpy(q).to(self.dev))
+            return torch_res.cpu().numpy()
+
+    def adjoint_call(self, q):
+        with torch.no_grad(): # Using numpy so why use grads.
+            torch_res = self.op.adjoint_call(torch.from_numpy(q).to(self.dev))
+            return torch_res.cpu().numpy()
+
+    def batched_call(self, q_batch):
+        return (torch.vmap(self.op)(torch.from_numpy(q_batch).to(self.dev))).cpu().numpy()
+
+    def batched_adjoint_call(self, q_batch):
+        return (torch.vmap(self.op.adjoint_call)(torch.from_numpy(q_batch).to(self.dev))).cpu().numpy()
+
 class AveragedOperator(Operator):
     def __init__(self, op, true_shape):
         # Create an operator that takes in inputs that are identical along one or multiple axes. 
-        super().__init__()
+        super().__init__(op.shape_in, op.shape_out, op.dev, op.self_adjoint)
         self.op = op
         self.true_shape = true_shape # The shape we should make inputs into.
 
@@ -98,7 +136,7 @@ class AveragedOperator(Operator):
 
 class ComposedOperator(Operator):
     def __init__(self, op1, op2):
-        super().__init__()
+        super().__init__(op2.shape_in, op1.shape_out, op2.dev, False)
 
         # Define operator op1 * op2.
         self.op1 = op1
@@ -112,7 +150,7 @@ class ComposedOperator(Operator):
 
 class TransposedOperator(Operator):
     def __init__(self, op):
-        super().__init__()
+        super().__init__(op.shape_out, op.shape_in, op.dev, op.self_adjoint)
         self.op = op
 
     def __call__(self, q):
@@ -120,22 +158,3 @@ class TransposedOperator(Operator):
 
     def adjoint_call(self, q):
         return self.op(q)
-
-
-class FinalTimestepOperator(Operator):
-    def __init__(self, op, full_shape):
-        # Create an operator that takes the final time in forward call. In adjoint call it pads with zeros.
-        super().__init__()
-        self.op = op
-        self.full_shape = full_shape
-
-    def __call__(self, q):
-        # q is shape [..., B, T, H]. Output is shape [..., B, 1, H].
-        return self.op(q)[..., :, -1:, :]
-
-    def adjoint_call(self, q):
-        # q is shape [..., B, 1, H]. Output is shape [..., B, T, H].
-        # create a q_pad tensor which has zeros everywhere except at final times.
-        q_pad = torch.zeros(self.full_shape)
-        q_pad[..., :, -1:, :] = np_to_torch(q)
-        return self.op.adjoint_call(q_pad)

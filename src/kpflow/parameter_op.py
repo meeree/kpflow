@@ -1,5 +1,6 @@
 # Parameter operator from main paper. 
 import torch
+from torch import nn
 import numpy as np
 from torch.func import vjp, jvp, functional_call
 
@@ -14,9 +15,9 @@ torch_to_np = lambda x: x if not torch.is_tensor(x) else x.detach().cpu().numpy(
 # Efficient tensor NTK-style implementation using python vjp and jvp functions.
 class JThetaOperator(Operator):
     def __init__(self, model_f, inputs, hidden, dev = 'cpu'):
-        super().__init__()
+        nparams = sum(p.numel() for _,p in model_f.named_parameters())
+        super().__init__(nparams, hidden.shape, dev)
 
-        self.dev = dev
         inputs = np_to_torch(inputs).to(dev)
         hidden = np_to_torch(hidden).to(dev)
         self.shape = hidden.shape
@@ -28,10 +29,12 @@ class JThetaOperator(Operator):
         self.model_f = func_param_only
         self.params = dict(model_f.to(dev).named_parameters())
 
+        self.vectorize = False # Convert parameters to vectors.
+
     @torch.no_grad
     def __call__(self, q):
-        # Input should be a DICTIONARY of named parameters, e.g. dict(model.named_parameters()).
-        # a tuple of length one with the dictionary is also accepted.
+        # The input should be a dict of named parameters, e.g. dict(model.named_parameters()).
+        # Vectorized input for this call is not supported. Only for adjoint_call is this supported for now.
         inp = (q,) if isinstance(q, dict) else q
         return jvp(self.model_f, (self.params,), inp)[1].reshape(self.shape)  # [B, T, H]
 
@@ -41,13 +44,14 @@ class JThetaOperator(Operator):
 
         # This computes vec @ J(x2).T. It contracts over all axes (e.g. time, batches, hidden) and gives something of same shape as theta.
         _, vjp_fn = vjp(self.model_f, self.params) 
-        vjps = vjp_fn(q_flat)
-        return vjps[0] # A dictionary.
+        vjp_out = vjp_fn(q_flat)[0] # A dictionary.
+        if not self.vectorize:
+            return vjp_out
+        return nn.utils.parameters_to_vector(vjp_out.values()) # A vector.
 
 class ParameterOperator(Operator):
     def __init__(self, model_f, inputs, hidden, dev = 'cpu'):
-        super().__init__()
-        self.self_adjoint = True # We are self adjoint! :)
+        super().__init__(hidden.shape, hidden.shape, dev, True)
         self.jtheta_op = JThetaOperator(model_f, inputs, hidden, dev)
 
     def __call__(self, q):
