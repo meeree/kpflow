@@ -35,17 +35,7 @@ def trace_hupp_adj_only(A, B, nsamp):
     prod = G - Q @ (Q.T @ G)
     return np.trace((B.T @ Q).T @ (B.T @ Q)) + (1./nsamp) * np.trace((B.T @ prod).T @ (B.T @ prod))
 
-# Nystrom++ Algorithm.
-def trace_nypp(A, nsamp):
-    d = A.shape[0]
-    S = np.random.randint(2, size=(d,nsamp)).astype(float) * 2 - 1 # Either 1 or -1
-    G = np.random.randint(2, size=(d,nsamp)).astype(float) * 2 - 1 # Either 1 or -1
-
-    Q, _ = np.linalg.qr(A @ S)
-    prod = G - Q @ (Q.T @ G)
-    return np.trace((A @ Q).T @ Q) + (1./nsamp) * np.trace((A @ prod).T @ prod)
-
 def op_alignment(A, B, shape, nsamp):
-    num = trace_hupp((A.T() @ B).to_scipy(shape), nsamp)
-    denom = (trace_nypp((A.T() @ A).to_scipy(shape), nsamp) * trace_nypp((B.T() @ B).to_scipy(shape), nsamp))**0.5
+    num = trace_hupp_op(A.T() @ B, nsamp)
+    denom = (trace_hupp_op(A.T() @ A, nsamp) * trace_hupp_op(B.T() @ B, nsamp))**0.5
     return num / denom
