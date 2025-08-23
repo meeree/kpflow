@@ -10,16 +10,11 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 import time
 
-def measure_times(*fns):
-    times = {}
-    for fn in fns:
-        time_0 = time.perf_counter()
-        fn()
-        times[fn.__name__] = time.perf_counter() - time_0
-    return times
+def rel_error(x, y):
+    return np.abs(x - y) / max(np.abs(x), np.abs(y))
 
 def time_methods(model = 'rnn'):
-    from kpflow.trace_estimation import trace_hupp, trace_hupp_adj_only, trace_hupp_op
+    from kpflow.trace_estimation import trace_hupp, trace_hupp_adj_only, trace_hupp_op, cross_trace_op
     from kpflow.tasks import CustomTaskWrapper
     from kpflow.architecture import Model, get_cell_from_model
     from kpflow.parameter_op import ParameterOperator, JThetaOperator
@@ -30,6 +25,7 @@ def time_methods(model = 'rnn'):
     inputs, targets = task()
     n_in, n_out = inputs.shape[-1], targets.shape[-1]
     model = Model(input_size = n_in, output_size = n_out, rnn=nn.GRU if model == 'gru' else nn.RNN, hidden_size = 256)
+    model2 = Model(input_size = n_in, output_size = n_out, rnn=nn.GRU if model == 'gru' else nn.RNN, hidden_size = 256)
     out, hidden = model(inputs)
     
     class Select(nn.Module):
@@ -40,12 +36,48 @@ def time_methods(model = 'rnn'):
         def forward(self, x):
             return x[self.index]
 
-    model.flatten_parameters = lambda: None
     model_hidden = nn.Sequential(model, Select(1)) # Select only hidden state, not output.
+    model_hidden2 = nn.Sequential(model2, Select(1)) # Select only hidden state, not output.
     gop_full = HiddenNTKOperator(model_hidden, inputs, hidden, 'cpu')
-    time_0 = time.perf_counter()
-    trace_hupp_op(gop_full, 50)
-    print(time.perf_counter() - time_0)
+    gop_full2 = HiddenNTKOperator(model_hidden2, inputs, hidden, 'cpu')
+
+    cos_hupp = lambda A, B, nsamp: trace_hupp_op(A.T() @ B, nsamp) / (trace_hupp_op(A.T() @ A, nsamp) * trace_hupp_op(B.T() @ B, nsamp))**0.5
+
+    nsamps = (10**np.linspace(1, 3, 40)).astype(int)
+    plt.figure(figsize = (4, 3))
+    for trace_fun in [cross_trace_op, cos_hupp]:
+        try:
+            times, evals = np.load(f'data_cross_trace_{trace_fun.__name__}.npy')
+        except:
+            times, evals = [], []
+            for nsamp in tqdm(nsamps):
+                time_0 = time.perf_counter()
+                evals.append(trace_fun(gop_full, gop_full2, nsamp))
+                times.append(time.perf_counter() - time_0)
+            evals = np.stack(evals)
+            np.save(f'data_cross_trace_{trace_fun.__name__}', (times, evals))
+
+        rel_err = np.abs(evals - evals[-1]) / np.abs(evals[-1])
+        plt.plot(times[1:], rel_err[1:])
+#        plt.xscale('log')
+        plt.yscale('log')
+#
+#        plt.subplot(1,3,1)
+#        plt.plot(nsamps, times)
+#        plt.xscale('log')
+#        plt.xlabel('# of Trace Estimation Samples', fontsize = 14)
+#        plt.ylabel('Runtime', fontsize = 14)
+#        plt.subplot(1,3,2)
+#        plt.plot(nsamps, evals)
+#        plt.xscale('log')
+#        plt.ylabel('Estimated Trace', fontsize = 14)
+#        plt.subplot(1,3,3)
+#        rel_err = np.abs(evals - evals[-1]) / np.abs(evals[-1])
+#        plt.loglog(nsamps, rel_err)
+#        plt.ylabel('Relative Error vs Best Estimate', fontsize = 14)
+
+    plt.tight_layout()
+    plt.show()
 
     # NTK alignment.
     cell = get_cell_from_model(model)
