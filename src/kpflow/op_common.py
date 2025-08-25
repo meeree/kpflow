@@ -82,7 +82,8 @@ class Operator(ABC):
 # Takes in flattened shape_in, shape_out.
 class FlatWrapper(Operator):
     def __init__(self, op):
-        shape_in_flat, shape_out_flat = prod(op.shape_in), prod(op.shape_out)
+        prod_if = lambda x: x if isinstance(x, int) else prod(x)
+        shape_in_flat, shape_out_flat = prod_if(op.shape_in), prod_if(op.shape_out)
         super().__init__(shape_in_flat, shape_out_flat, op.dev, op.self_adjoint)
         self.op = op
 
@@ -158,3 +159,16 @@ class TransposedOperator(Operator):
 
     def adjoint_call(self, q):
         return self.op(q)
+
+class MatrixWrapper(Operator):
+    def __init__(self, mat, dev = 'cpu'):
+        super().__init__(mat.shape[0], mat.shape[1], dev, False)
+        self.mat = np_to_torch(mat).to(dev).float()
+
+    def __call__(self, q):
+        return self.mat @ np_to_torch(q).to(self.dev).float()
+
+    def adjoint_call(self, q):
+        return self.mat.T @ np_to_torch(q).to(self.dev).float()
+
+

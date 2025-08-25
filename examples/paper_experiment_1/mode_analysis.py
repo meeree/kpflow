@@ -5,7 +5,8 @@ from kpflow.analysis_utils import ping_dir, load_checkpoints, import_checkpoint,
 from kpflow.architecture import Model, get_cell_from_model
 from kpflow.parameter_op import ParameterOperator, JThetaOperator
 from kpflow.propagation_op import PropagationOperator_DirectForm, PropagationOperator_LinearForm
-from kpflow.op_common import AveragedOperator, check_adjoint, Operator
+from kpflow.op_common import AveragedOperator, Operator
+from kpflow.trace_estimation import trace_hpp
 
 from common import project, plot_trajectories, compute_svs, set_mpl_defaults
 
@@ -76,26 +77,31 @@ if __name__ == '__main__':
     ping_dir(f'anim_frames_scales_{args.task_str}/')
     for idx, (model, hidden) in enumerate(zip(tqdm(models[::1]), hidden_all[::1])):
         sv, sfuns = [], []
+        cell = get_cell_from_model(model)
         for i in range(hidden.shape[0]):
-            cell = get_cell_from_model(model)
             jop = JThetaOperator(cell, inputs[i:i+1], hidden[i:i+1]) 
             pop = PropagationOperator_LinearForm(cell, inputs[i:i+1], hidden[i:i+1])
             kop = ParameterOperator(cell, inputs, hidden)
-            
-            gram_c = pop @ kop @ pop.T()   # Controllability Grammian
+            gram_c = pop @ pop.T()   # Controllability Grammian
 
             avg_shape = (1, hidden.shape[1], 1)
             avg_gram_c = AveragedOperator(gram_c, hidden.shape)
 
+            avg_pop = AveragedOperator(pop, hidden.shape)
+
             sv_i, sfuns_i = compute_svs(avg_gram_c, avg_shape, 42, True)
 
- #           plt.figure()
- #           dim, varrat = gram_c.effrank(sv_i, .95) 
- #           plt.plot(varrat)
- #           plt.axhline(.95)
- #           plt.title(dim)
+            plt.figure()
+            for mean in np.linspace(-1., 1., 10):
+                signal = np.random.normal(size = sfuns_i[0].shape, scale = 0.1) + mean
+                output = avg_pop(signal)
 
- #           plt.show()
+                plt.subplot(1,3,1)
+                plt.plot(signal[0, :, 0])
+                plt.subplot(1,3,2)
+                plt.plot(output[0, :, 0])
+                plt.subplot(1,3,3)
+                plt.plot(np.cumsum(signal[0, :, 0]))
 
             # Re-orient sfuns
             sfuns_i *= np.sign(sfuns_i[:, :, 0:1, :]) 

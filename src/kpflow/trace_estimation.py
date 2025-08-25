@@ -12,6 +12,7 @@ def trace_hupp(A, nsamp):
     prod = G - Q @ (Q.T @ G)
     return np.trace((A @ Q).T @ Q) + (1./nsamp) * np.trace((A @ prod).T @ prod)
 
+# Version using my Operator class interface.
 def trace_hupp_op(A, nsamp):
     A_flat = A.flatten() # Flatten input and output shapes. 
     d = A_flat.shape_in
@@ -24,6 +25,7 @@ def trace_hupp_op(A, nsamp):
     prod = G - Q @ (Q.T @ G)
     return torch.trace(call(Q).T @ Q) + (3./nsamp) * torch.trace(call(prod).T @ prod)
 
+# Adjoint only hutch++.
 def trace_hupp_adj_only(A, B, nsamp):
     # Assume A = B B^T.
     d = A.shape[0]
@@ -34,6 +36,7 @@ def trace_hupp_adj_only(A, B, nsamp):
     prod = G - Q @ (Q.T @ G)
     return np.trace((B.T @ Q).T @ (B.T @ Q)) + (1./nsamp) * np.trace((B.T @ prod).T @ (B.T @ prod))
 
+# Efficient cosine alignment re-using redundancies.
 def op_alignment(A, B, nsamp=20):
     A_flat = A.flatten() # Flatten input and output shapes. 
     B_flat = B.flatten() 
@@ -41,6 +44,6 @@ def op_alignment(A, B, nsamp=20):
     G = torch.randn(d, nsamp)
     Q, _ = torch.linalg.qr(G) # Random orthonormal vectors.
     S = (d / nsamp)**0.5 * Q          
-    AS = A_flat.batched_call(S.T).T
+    AS = A_flat.batched_call(S.T).T # This is BY FAR the bottle-neck.
     BS = B_flat.batched_call(S.T).T
     return torch.sum(AS * BS) / (torch.sum(AS * AS) * torch.sum(BS * BS))**0.5

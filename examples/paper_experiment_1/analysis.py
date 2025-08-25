@@ -3,7 +3,7 @@ from kpflow.analysis_utils import ping_dir, load_checkpoints, import_checkpoint,
 from kpflow.architecture import Model, get_cell_from_model
 from kpflow.parameter_op import ParameterOperator, JThetaOperator
 from kpflow.propagation_op import PropagationOperator_DirectForm, PropagationOperator_LinearForm
-from kpflow.op_common import AveragedOperator, check_adjoint, Operator
+from kpflow.op_common import AveragedOperator, Operator
 
 import torch
 from torch import nn
@@ -138,6 +138,7 @@ if __name__ == '__main__':
             cell = get_cell_from_model(model)
             pop = PropagationOperator_LinearForm(cell, inputs, hidden)
             kop = ParameterOperator(cell, inputs, hidden)
+
             avg_shape = (1, 1, hidden.shape[2])
             avg_grad_op = AveragedOperator(pop @ kop @ pop.T(), hidden.shape)
             eigdirs.append(compute_svs(avg_grad_op, avg_shape, 3, True, tol = 1e-4)[1][:, 0, 0])
@@ -158,7 +159,6 @@ if __name__ == '__main__':
     plt.colorbar()
     plt.tight_layout()
     plt.savefig(f'{args.task_str}_corr_changes.pdf')
-    plt.show()
 
     dims = [[], []]
     inputs, hidden_all = inputs[[0, 50, 100, 150]], hidden_all[:, [0, 50, 100, 150]]
@@ -185,7 +185,6 @@ if __name__ == '__main__':
     plt.savefig(f'Effrank_over_gd_{args.task_str}.png')
     plt.show()
 
-
     colors = (np.stack([ang, ang * 0., ang * 0.], -1) + np.pi) / (2 * np.pi)
     colors = colors[[0, 50, 100, 150]]
     colors = ['red', 'green', 'blue', 'purple']
@@ -204,17 +203,6 @@ if __name__ == '__main__':
 
             sv_i, sfuns_i = compute_svs(avg_gram_c, avg_shape, 42, True)
 
- #           plt.figure()
- #           plt.plot(sv_i)
-
- #           plt.figure()
- #           dim, varrat = gram_c.effrank(sv_i, .95) 
- #           plt.plot(varrat)
- #           plt.axhline(.95)
- #           plt.title(dim)
-
- #           plt.show()
-
             # Re-orient sfuns
             sfuns_i *= np.sign(sfuns_i[:, :, 0:1, :]) 
             sv.append(sv_i); sfuns.append(sfuns_i[:, 0])
@@ -225,12 +213,9 @@ if __name__ == '__main__':
         kop = ParameterOperator(cell, inputs, hidden)
         dim, varrat = gram_c.effrank(sv, .95) 
 
-#        plt.figure()
-#        plt.plot(sv)
-#
-#        norm_mean = np.mean(np.linalg.norm(sfuns, axis=-1), -1) # Norm over hidden, mean over time. 
-#        plt.figure()
-#        plt.plot(norm_mean[0])
+        plt.figure()
+        plt.plot(sv)
+        plt.title('Singular Values')
 
         wsfuns = sv[:, :, None, None] * sfuns
         ymin, ymax = wsfuns.min(), wsfuns.max()
@@ -242,16 +227,6 @@ if __name__ == '__main__':
                 plt.plot(wsfuns[i, j, :, :], color = colors[j])
             plt.ylim(ymin, ymax)
         plt.tight_layout()
-        
-        plt.show()
         plt.savefig(f'anim_frames/anim_{idx}.png')
-#
-#        plt.figure(figsize = (12, 8))
-#        for i in range(20):
-#            pca, wsfun_proj = project(wsfuns[i])
-#            plot_trajectories(wsfun_proj, 4, 5, i+1, legend = False, dim = 2, colors = colors)
-#
-#        plt.tight_layout()
-#        plt.show()
 
     plt.show()
