@@ -120,18 +120,21 @@ class NumpyWrapper(Operator):
         return (torch.vmap(self.op.adjoint_call)(torch.from_numpy(q_batch).to(self.dev))).cpu().numpy()
 
 class AveragedOperator(Operator):
-    def __init__(self, op, true_shape):
+    def __init__(self, op, true_shape, avg_shape):
         # Create an operator that takes in inputs that are identical along one or multiple axes. 
-        super().__init__(op.shape_in, op.shape_out, op.dev, op.self_adjoint)
+        super().__init__(avg_shape, avg_shape, op.dev, op.self_adjoint)
         self.op = op
         self.true_shape = true_shape # The shape we should make inputs into.
+        self.avg_shape = avg_shape # The shape of inputs.
 
     def __call__(self, q):
         # q should have 1s in the dimensions to expand and len(q.shape) should equal len(self.true_shape).
+        assert q.shape == self.avg_shape
         new_axes = [i for i in range(len(self.true_shape)) if self.true_shape[i] != q.shape[i]]
         return self.op(np_to_torch(q).expand(self.true_shape)).mean(tuple(new_axes)).reshape(q.shape)
 
     def adjoint_call(self, q):
+        assert q.shape == self.avg_shape
         new_axes = [i for i in range(len(self.true_shape)) if self.true_shape[i] != q.shape[i]]
         return self.op.adjoint_call(np_to_torch(q).expand(self.true_shape)).mean(tuple(new_axes)).reshape(q.shape)
 
