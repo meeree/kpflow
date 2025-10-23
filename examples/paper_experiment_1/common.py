@@ -41,9 +41,9 @@ def plot_trajectories(data, m = 1, n = 1, i = 1, dim = 3, legend = True, colors 
     if legend:
         plt.legend(['stim', 'mem', 'resp'])
 
-def compute_svs(op, inp_shape, ncomps, compute_vecs = False, tol = 1e-8):
+def compute_svs(op, ncomps, compute_vecs = False, tol = 1e-8):
     from scipy.sparse.linalg import eigsh
-    op_sp = op.to_scipy(inp_shape, inp_shape, dtype = float, can_matmat = False)
+    op_sp = op.to_scipy()
     if compute_vecs:
         singular_vals, singular_vecs = eigsh(op_sp, k = ncomps, return_eigenvectors = True, tol = tol)
         return singular_vals[::-1], singular_vecs[:, ::-1].T.reshape((-1, *inp_shape))

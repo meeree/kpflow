@@ -31,8 +31,13 @@ def generate(cfg = DEFAULT_CFG, debug = False, noise = True):
     inp[:, :response_start, 0] = 1.
     target[:, :, 0] = inp[:, :, 0] # Same target for fixation.
 
-    # Uniform angles from 0 to 2 * pi.
-    angles = torch.rand(inp.shape[0]) * 2 * np.pi
+    if not noise:
+        # Exactly spaced angles from 0 to 2 * pi, exclusive.
+        angles = torch.linspace(0., 2 * np.pi, inp.shape[0]+1)[:-1]
+    else:
+        # Random angles from 0 to 2 * pi.
+        angles = torch.rand(inp.shape[0]) * 2 * np.pi
+
     c, s = cfg["amplitude"] * torch.cos(angles), cfg["amplitude"] * torch.sin(angles)
 
     if not cfg['delay']:
@@ -70,6 +75,7 @@ def generate(cfg = DEFAULT_CFG, debug = False, noise = True):
     if noise:
         with torch.no_grad():
             inp += torch.normal(torch.zeros_like(inp), 1.) * .1 * (2 ** .5)
+
     return inp, target
 
 def accuracy(X, Y):

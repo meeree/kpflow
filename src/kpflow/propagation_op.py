@@ -25,24 +25,25 @@ class PropagationOperator_LinearForm(Operator):
         hidden = np_to_torch(hidden).to(dev)
 
         inputs_flat = inputs.reshape((-1, inputs.shape[-1]))
-        model_f = partial(model_f, inputs_flat)
-        self.jacs = compute_jacobians(model_f, hidden, to_np = False) # [B, T, H, H]
+        model_f_dev = model_f.to(dev)
+        model_f_hidden_only = partial(model_f_dev, inputs_flat)
+        self.jacs = compute_jacobians(model_f_hidden_only, hidden, to_np = False) # [B, T, H, H]
 #        self.Qs, self.Rs, self.Us = fundamental_matrix(self.jacs)
 
     @torch.no_grad
-    def __call__(self, q):
-        q_dev = np_to_torch(q)[...,None].float() # Shape [B, T, H, 1].
+    def __matvec(self, q):
+        q_dev = np_to_torch(q).reshape(self.shape_in)[...,None].float() # Shape [B, T, H, 1].
         res = [torch.zeros_like(q_dev[:, 0])]
-        for t in range(q.shape[1]):
+        for t in range(q_dev.shape[1]):
             res.append(q_dev[:, t] + self.jacs[:, t] @ res[-1])
 
         return torch.stack(res[1:], 1)[...,0]
 
     @torch.no_grad
-    def adjoint_call(self, q):
-        q_dev = np_to_torch(q)[...,None].float() # Shape [B, T, H, 1].
+    def __rmatvec(self, q):
+        q_dev = np_to_torch(q).reshape(self.shape_out)[...,None].float() # Shape [B, T, H, 1].
         res = [q_dev[:, -1]]
-        for t in range(q.shape[1]-2, -1, -1):
+        for t in range(q_dev.shape[1]-2, -1, -1):
             res.append(q_dev[:, t] + self.jacs[:, t+1].swapaxes(-2,-1) @ res[-1])
 
         return torch.stack(res, 1)[...,0].flip(1) # Reverse time.
@@ -121,7 +122,7 @@ class PropagationOperator_DirectForm(Operator):
         return res # A list
 
     @torch.no_grad
-    def __call__(self, q):
+    def __matvec(self, q):
         # q is shape (..., B, T, H) where ... can be any dimension.
         # Evaluate forwards(model_f + q) - forwards(model_f).
         q_dev = np_to_torch(q).to(self.dev).float() # [B, T, H]
@@ -135,7 +136,7 @@ class PropagationOperator_DirectForm(Operator):
             return res.mean(0).reshape(q.shape)
         return res
 
-    def adjoint_call(self, q):
+    def __rmatvec(self, q):
         # Adjoint maps grad(l(z(t|x)), z(t|x)) to grad(Loss, z(t|x)) where grad(mean(l(z(t|x))), z(t|x)).
         # So, if we let q(t|x) = grad(l(z(t|x)), z(t|x)), we get the output. To do this, we can let
         # l(z(t|x)) = <z(t|x), q(t|x)>.

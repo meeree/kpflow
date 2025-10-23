@@ -6,7 +6,7 @@ from kpflow.architecture import Model, get_cell_from_model
 from kpflow.parameter_op import ParameterOperator, JThetaOperator
 from kpflow.propagation_op import PropagationOperator_DirectForm, PropagationOperator_LinearForm
 from kpflow.op_common import AveragedOperator, Operator
-from kpflow.trace_estimation import trace_hpp
+from kpflow.trace_estimation import trace_hupp
 
 from common import project, plot_trajectories, compute_svs, set_mpl_defaults
 
@@ -69,6 +69,46 @@ if __name__ == '__main__':
     hidden_all = np.stack(hidden_all)
     print(f'Hidden shape over all GD snapshots has shape {hidden_all.shape} = (GD Iter, Trial, Time, Hidden Unit)')
 
+    for idx, (model, hidden) in enumerate(zip(tqdm(models[::1]), hidden_all[::1])):
+        cell = get_cell_from_model(model)
+        kop = ParameterOperator(cell, inputs, hidden)
+
+        q = torch.randn(5, *hidden.shape)
+        p = kop.batched_call(q)
+
+        plt.figure(figsize = (4 * 2, 3 * 5))
+        for j in range(5):
+            plt.subplot(5,2,1 + j * 2)
+            plt.title('Random Input')
+            plt.plot(q[j, :10, :, 0].T)
+            plt.subplot(5,2,2 + j * 2)
+            plt.title('Output Under K')
+            plt.plot(p[j, :10, :, 0].T)
+
+        plt.tight_layout()
+        break
+
+    for idx, (model, hidden) in enumerate(zip(tqdm(models[::1]), hidden_all[::1])):
+        cell = get_cell_from_model(model)
+        pop = PropagationOperator_LinearForm(cell, inputs, hidden)
+
+        q = torch.randn(5, *hidden.shape)
+        p = pop.batched_call(q)
+        plt.figure(figsize = (4 * 2, 3 * 5))
+
+        for j in range(5):
+            plt.subplot(5,2,1 + j * 2)
+            plt.title('Random Input')
+            plt.plot(q[j, :10, :, 0].T)
+            plt.subplot(5,2,2 + j * 2)
+            plt.title('Output Under P')
+            plt.plot(p[j, :10, :, 0].T)
+
+        plt.tight_layout()
+        plt.show()
+
+    jsaoidjoisad
+
     print('Beginning analysis with KP-Flow Operators...')
     colors = (np.stack([ang, ang * 0., ang * 0.], -1) + np.pi) / (2 * np.pi)
     colors = colors[[0, 50, 100, 150]]
@@ -88,6 +128,11 @@ if __name__ == '__main__':
             avg_gram_c = AveragedOperator(gram_c, hidden.shape)
 
             avg_pop = AveragedOperator(pop, hidden.shape)
+            from scipy.sparse.linalg import eigsh
+
+            avg_pop_sp = avg_pop.to_scipy() # Convert to scipy linear operator
+            singular_vals, singular_vecs = eigsh(avg_pop_sp, k = 10, return_eigenvectors = True, tol = 1e-2)
+            oiasjdoisad
 
             sv_i, sfuns_i = compute_svs(avg_gram_c, avg_shape, 42, True)
 

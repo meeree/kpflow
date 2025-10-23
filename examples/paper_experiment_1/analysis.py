@@ -3,6 +3,7 @@ from kpflow.analysis_utils import ping_dir, load_checkpoints, import_checkpoint,
 from kpflow.architecture import Model, get_cell_from_model
 from kpflow.parameter_op import ParameterOperator, JThetaOperator
 from kpflow.propagation_op import PropagationOperator_DirectForm, PropagationOperator_LinearForm
+from kpflow.grad_op import HiddenNTKOperator
 from kpflow.op_common import AveragedOperator, Operator
 
 import torch
@@ -32,7 +33,7 @@ if __name__ == '__main__':
 
     task_nice_str = args.task_str.replace('_', ' ').title()
     print(f'Evaluating Results for {task_nice_str}')
-    task = CustomTaskWrapper(args.task_str, 200, use_noise = False, n_samples = 200, T = 90)
+    task = CustomTaskWrapper(args.task_str, 20, use_noise = False, n_samples = 20, T = 90)
     inputs, targets = task()
     n_in, n_out = inputs.shape[-1], targets.shape[-1]
     ang = torch.arctan2(inputs[:, 0, 2], inputs[:, 0, 1]).detach().cpu().numpy()
@@ -61,6 +62,40 @@ if __name__ == '__main__':
     plt.title('Test loss')
     plt.xlabel('GD Iteration')
     plt.ylabel('Loss (mse)')
+
+    dims = [[], [], []]
+#    inputs, hidden_all = inputs[[0, 50, 100, 150]], hidden_all[:, [0, 50, 100, 150]]
+    for idx, (model, hidden) in enumerate(zip(tqdm(models[::6]), hidden_all[::6])):
+        cell = get_cell_from_model(model)
+        pop = PropagationOperator_LinearForm(cell, inputs, hidden)
+        kop = ParameterOperator(cell, inputs, hidden)
+
+        class GetHidden(nn.Module):
+            def __init__(self, net):
+                super().__init__()
+                self.net = net
+
+            def forward(self, x):
+                return self.net(x)[1]
+
+        gop = HiddenNTKOperator(GetHidden(model), inputs, hidden)
+        avg_shape = (1, hidden.shape[1], 1)
+        for idx, op in enumerate([kop, pop, gop]):
+            ncomp = 60 if idx == 1 else 20
+            sv = op.svd(ncomp, avg_shape)
+            dims[idx].append(Operator.effrank(sv, .95)[0])
+
+    plt.figure(figsize = (8, 4))
+    plt.plot(dims[0], color = PALLETTE[0], linewidth = 3)
+    plt.plot(dims[1], color = PALLETTE[1], linewidth = 3)
+    plt.plot(dims[2], color = PALLETTE[2], linewidth = 3)
+    plt.legend(['$\\mathcal{K}$', '$\\mathcal{P}$', '$\\mathcal{P K P^*}$'])
+    plt.xlabel('GD Iteration')
+    plt.ylabel('Operator Effective Rank')
+#    plt.title(f'Task = {task_nice_str}')
+    plt.tight_layout()
+    plt.savefig(f'Effrank_over_gd_{args.task_str}.png')
+    plt.show()
 
     def project(data):
         data_flat = data.reshape((-1, data.shape[-1]))
@@ -159,31 +194,6 @@ if __name__ == '__main__':
     plt.colorbar()
     plt.tight_layout()
     plt.savefig(f'{args.task_str}_corr_changes.pdf')
-
-    dims = [[], []]
-    inputs, hidden_all = inputs[[0, 50, 100, 150]], hidden_all[:, [0, 50, 100, 150]]
-    for idx, (model, hidden) in enumerate(zip(tqdm(models[::1]), hidden_all[::1])):
-        cell = get_cell_from_model(model)
-        pop = PropagationOperator_LinearForm(cell, inputs, hidden)
-        kop = ParameterOperator(cell, inputs, hidden)
-
-        avg_shape = (1, hidden.shape[1], 1)
-        for idx, op in enumerate([kop, pop]):
-            ncomp = 60 if idx == 1 else 20
-            avg_gram = AveragedOperator(op @ op.T(), hidden.shape)
-            sv = compute_svs(avg_gram, avg_shape, ncomp)
-            dims[idx].append(Operator.effrank(sv, .95)[0])
-
-    plt.figure(figsize = (8, 4))
-    plt.plot(dims[0], color = PALLETTE[0], linewidth = 3)
-    plt.plot(dims[1], color = PALLETTE[1], linewidth = 3)
-    plt.legend(['$\\mathcal{K}$', '$\\mathcal{P}$'])
-    plt.xlabel('GD Iteration')
-    plt.ylabel('Operator Effective Rank')
-    plt.title(f'Task = {task_nice_str}')
-    plt.tight_layout()
-    plt.savefig(f'Effrank_over_gd_{args.task_str}.png')
-    plt.show()
 
     colors = (np.stack([ang, ang * 0., ang * 0.], -1) + np.pi) / (2 * np.pi)
     colors = colors[[0, 50, 100, 150]]

@@ -6,6 +6,7 @@ import numpy as np
 from itertools import product
 from tqdm import tqdm
 from kpflow.analysis_utils import ping_dir
+from kpflow.tasks import CustomTaskWrapper
 
 # INHERTIS commandline arguments from train.py in addition to the ones below.
 parser = argparse.ArgumentParser(description='Training Sweep')
@@ -30,10 +31,12 @@ if root_savename == '':
 ping_dir(root_savename)
 
 with tqdm(total=args.nscales*args.nrepeats) as pbar:
-    for repeat, scale in product(range(args.nrepeats), scales):
-        pbar.set_description("*********************************               SWEEP PROGRESS")
-        ping_dir(root_savename + f'/init_{scale}/')
-        args.save_dir = root_savename + f'/init_{scale}/repeat_{repeat}/'
-        args.init_level = scale
-        train.main(args)
-        pbar.update(1)
+    for repeat in range(args.nrepeats):
+        task = CustomTaskWrapper(args.task_str, 500, use_noise = True, n_samples = 5000, T = args.duration, T_stim = 10, T_memory = 10, T_response = 10)
+        for scale in scales:
+            pbar.set_description("*********************************               SWEEP PROGRESS")
+            ping_dir(root_savename + f'/init_{scale}/')
+            args.save_dir = root_savename + f'/init_{scale}/repeat_{repeat}/'
+            args.init_level = scale
+            train.main(args, task)
+            pbar.update(1)

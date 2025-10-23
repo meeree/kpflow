@@ -37,7 +37,7 @@ class NeuroGymWrapper():
         return {'acc': acc, 'acc_respond': acc_respond}
 
 class CustomTaskWrapper():
-    def __init__(self, task, batch_size, use_noise = True, shuffle = True, **kwargs):
+    def __init__(self, task, batch_size, use_noise = True, **kwargs):
         import torch
         tasks_avail = ['flip_flop', 'memory_pro', 'memory_pro_oh', 'mix_multi_tasks', 'cont_integration']
         if task == 'flip_flop':
@@ -52,6 +52,9 @@ class CustomTaskWrapper():
         elif task == 'mix_multi_tasks':
             from .custom_tasks import mix_multi_tasks
             self.task = mix_multi_tasks
+        elif task == 'low_rank_forecast':
+            from .custom_tasks import low_rank_forecast
+            self.task = low_rank_forecast
         else:
             raise Exception(f"No such task: {task}, available tasks: {tasks_avail}")
 
@@ -61,7 +64,7 @@ class CustomTaskWrapper():
 
         inps, targets = self.task.generate(self.cfg, noise = self.use_noise)
         self.dataset = torch.utils.data.TensorDataset(inps, targets)
-        self.dataloader = torch.utils.data.DataLoader(self.dataset, batch_size=batch_size, shuffle=shuffle)
+        self.dataloader = torch.utils.data.DataLoader(self.dataset, batch_size=batch_size, shuffle=use_noise)
 
     def __call__(self):
         return next(iter(self.dataloader))

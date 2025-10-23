@@ -16,25 +16,35 @@ class FullJThetaOperator(Operator):
         super().__init__(nparams, hidden.shape, dev)
 
         inputs = np_to_torch(inputs).to(dev)
-        def func_param_only(params):
-            return functional_call(model, params, inputs) # Turn model into a functor accepting parameters as an argument.
+        model_dev = model.to(dev)
 
-        self.model = func_param_only
-        self.params = dict(model.to(dev).named_parameters())
+        class FnParamsOnly(nn.Module):
+            def __init__(self, model, inputs):
+                super().__init__()
+                self.model = model
+                self.inputs = inputs
+
+            def forward(self, params):
+                return functional_call(self.model, params, self.inputs)
+
+        self.model = FnParamsOnly(model_dev, inputs)
+        self.params = dict(model_dev.named_parameters())
         self.vectorize = False # Convert parameters to vectors.
+        self.vjp_fn = vjp(self.model, self.params)[1]
+        if dev !='cpu':
+            self.vjp_fn = torch.compile(self.vjp_fn)
 
-    @torch.no_grad
+    @torch.no_grad()
     def __call__(self, q):
         # The input should be a dict of named parameters, e.g. dict(model.named_parameters()).
         # Vectorized input for this call is not supported. Only for adjoint_call is this supported for now.
         inp = (q,) if isinstance(q, dict) else q
         return jvp(self.model, (self.params,), inp)[1]  # [B, T, H]
 
-    @torch.no_grad
+    @torch.no_grad()
     def adjoint_call(self, q):
-        q_torch = np_to_torch(q)
-        _, vjp_fn = vjp(self.model, self.params) 
-        vjp_out = vjp_fn(q_torch)[0] # A dictionary.
+        q_torch = np_to_torch(q).to(self.dev)
+        vjp_out = self.vjp_fn(q_torch)[0] # A dictionary.
         if not self.vectorize:
             return vjp_out
         return nn.utils.parameters_to_vector(vjp_out.values()) # A vector.
