@@ -19,13 +19,13 @@ class Operator(ABC):
     # DEFINED BY BASES CLASS #####
 
     @abstractmethod
-    def __matvec(self, q):
-        raise Exception('__matvec is not defined')
+    def _matvec(self, q):
+        raise Exception('_matvec is not defined')
 
-    def __rmatvec(self, q): # If not self adjoint, need to set this by hand.
+    def _rmatvec(self, q): # If not self adjoint, need to set this by hand.
         if self.self_adjoint:
             return matvec(q)
-        raise Exception('__rmatvec is not defined')
+        raise Exception('_rmatvec is not defined')
 
     ##############################
 
@@ -34,26 +34,26 @@ class Operator(ABC):
         # For convenience, I don't enforce exact shaping (e.g. (500, 10) is same as (50, 10, 10)). 
         # This makes things like tensor products and contractions way less of a pain in the ass.
         q = q.reshape(self.shape_in)
-        return __matvec(self, q).reshape(self.shape_out)
+        return _matvec(self, q).reshape(self.shape_out)
 
     # shape_out -> shape_in
     def adjoint_call(self, q):
         q = q.reshape(self.shape_out)
-        return __rmatvec(self, q).reshape(self.shape_in)
+        return _rmatvec(self, q).reshape(self.shape_in)
 
     # [..., *shape_in] -> [..., *shape_out] if batch_first
     # [*shape_in, ...] -> [*shape_out, ...] otherwise
     def batched_call(self, q_batch):
         q_nice = q_batch.reshape((-1, *self.shape_in)) if self.batch_first else q_batch.reshape((*self.shape_in, -1)).T
         dim = 0 if self.batch_first else -1
-        fn = torch.vmap(self.__matvec, in_dims = dim, out_dims = dim)
+        fn = torch.vmap(self._matvec, in_dims = dim, out_dims = dim)
         return fn(q_nice)
 
     # [D, *shape_out] -> [D, *shape_in]
     def batched_adjoint_call(self, q_batch):
         q_nice = q_batch.reshape((-1, *self.shape_out)) if self.batch_first else q_batch.reshape((*self.shape_out, -1)).T
         dim = 0 if self.batch_first else -1
-        fn = torch.vmap(self.__rmatvec, in_dims = dim, out_dims = dim)
+        fn = torch.vmap(self._rmatvec, in_dims = dim, out_dims = dim)
         return fn(q_nice)
 
     # Get a version of the operator where shape_in, shape_out are flattened.
@@ -184,9 +184,9 @@ class Operator(ABC):
 class IdentityOperator(Operator):
     def __init__(self, shape, dev = 'cpu'):
         super().__init__(shape, shape, dev, self_adjoint = True)
-    def __matvec(self, q):
+    def _matvec(self, q):
         return q
-    def __rmatvec(self, q):
+    def _rmatvec(self, q):
         return q
 
 class TensorProduct(Operator):
@@ -197,7 +197,7 @@ class TensorProduct(Operator):
         self.op1, self.op2 = op1, op2
         self.op1_flat, self.op2_flat = self.op1.flatten(), self.op2.flatten()
 
-    def __matvec(self, q):
+    def _matvec(self, q):
         # simplest approach is to flatten and use vec(kron(A,B) vec(C)) = vec(B C A^T)
         # Key: op1_flat, op2_flat are shape (min, mout), (nin, nout)
         mat_q = q.reshape((self.op1_flat.shape_in[0], self.op2_flat.shape_in[0])) # shape (min, nin)
@@ -205,7 +205,7 @@ class TensorProduct(Operator):
         q2 = self.op1_flat.batched_call(q1.T).T # (mout, nout)
         return q2.reshape(self.shape_out) # Unflatten
 
-    def __rmatvec(self, q):
+    def _rmatvec(self, q):
         # q should be shape (op1.shape_out, op2.shape_out)
         # Key: op1_flat, op2_flat are shape (min, mout), (nin, nout)
         mat_q = q.reshape((self.op1_flat.shape_out[0], self.op2_flat.shape_out[0])) # shape (mout, nout)
@@ -232,11 +232,11 @@ class Hadamard(Operator):
         else:
             raise Exception(f'Unsupported Hadamard combination {comb}')
 
-    def __matvec(self, q):
-        return self.comb(self.op1.__matvec(q), self.op2.__matvec(q))
+    def _matvec(self, q):
+        return self.comb(self.op1._matvec(q), self.op2._matvec(q))
 
-    def __rmatvec(self, q):
-        return self.comb(self.op1.__rmatvec(q), self.op2.__rmatvec(q))
+    def _rmatvec(self, q):
+        return self.comb(self.op1._rmatvec(q), self.op2._rmatvec(q))
 
     def __str__(self):
         return f"Hadamard_{self.comb}({self.op1}, {self.op2})"
@@ -247,7 +247,7 @@ class HadamardProduct(Operator):
         super().__init__(op1.shape_in, op1.shape_out, dev, self_adjoint = (op1.self_adjoint and op2.self_adjoint))
         self.op1, self.op2 = op1, op2
 
-    def __matvec(self, q):
+    def _matvec(self, q):
         return op1(q) * op2(q)
 
     def adjoint_call(self, q):
@@ -261,10 +261,10 @@ class MatrixWrapper(Operator): # Just a normal matrix
         self.mul_fn = (lambda W, x : W @ x) if left_mul else (lambda W, x : x @ W)
         self.batched_mul_fn = (lambda W, x: (W @ x.swapaxes(0,1)).swapaxes(0,1)) if left_mul else (lambda W, x: x @ W) # note batching always is in dim 0, so need to swap for batching then swap back
         
-    def __matvec(self, q):
+    def _matvec(self, q):
         return self.mul_fn(self.W, q.reshape(self.shape_in)).reshape(self.shape_out)
 
-    def __rmatvec(self, q):
+    def _rmatvec(self, q):
         return self.mul_fn(self.W.T, q.reshape(self.shape_out)).reshape(self.shape_in)
 
     def batched_call(self, q_batch):
@@ -281,11 +281,11 @@ class FlatWrapper(Operator):
         super().__init__(shape_in_flat, shape_out_flat, op.dev, op.self_adjoint)
         self.op = op
 
-    def __matvec(self, q):
+    def _matvec(self, q):
         # [shape_in_flat] -> [self.op.shape_in] -> call -> [self.op.shape_out] -> [shape_out_flat].
         return self.op(q).reshape(self.shape_out)
 
-    def __rmatvec(self, q):
+    def _rmatvec(self, q):
         # [shape_out_flat] -> [self.op.shape_out] -> call -> [self.op.shape_in] -> [shape_in_flat].
         return self.op.adjoint_call(q).reshape(self.shape_in)
 
@@ -295,12 +295,12 @@ class NumpyWrapper(Operator):
         super().__init__(op.shape_in, op.shape_out, 'cpu', op.self_adjoint)
         self.op = op
 
-    def __matvec(self, q):
+    def _matvec(self, q):
         with torch.no_grad(): # Using numpy so why use grads.
             torch_res = self.op(torch.from_numpy(q).to(self.op.dev))
             return torch_res.cpu().numpy()
 
-    def __rmatvec(self, q):
+    def _rmatvec(self, q):
         with torch.no_grad(): # Using numpy so why use grads.
             torch_res = self.op.adjoint_call(torch.from_numpy(q).to(self.op.dev))
             return torch_res.cpu().numpy()
@@ -322,14 +322,14 @@ class PartialTrace(Operator):
         self.unreduced_shape = op.shape_in
         self.reduction = lambda x: x.sum(self.trace_dims) if reduction =='sum' else x.mean(self.trace_dims)
 
-    def __matvec(self, q):
+    def _matvec(self, q):
         nice_q = q.expand(self.op.shape_in) 
-        unreduced_out = self.op.__matvec(nice_q)
+        unreduced_out = self.op._matvec(nice_q)
         return self.reduction(unreduced_out).reshape(self.shape_in)
 
-    def __rmatvec(self, q):
+    def _rmatvec(self, q):
         nice_q = q.expand(self.op.shape_in) 
-        unreduced_out = self.op.__rmatvec(nice_q)
+        unreduced_out = self.op._rmatvec(nice_q)
         return self.reduction(unreduced_out).reshape(self.shape_in)
 
 class AffineTransformedOperator(Operator):
@@ -339,10 +339,10 @@ class AffineTransformedOperator(Operator):
         self.scale = scale
         self.shift = shift
 
-    def __matvec(self, q):
+    def _matvec(self, q):
         return self.op(q) * self.scale + self.shift
 
-    def __rmatvec(self, q):
+    def _rmatvec(self, q):
         return self.op.adjoint_call(q) * self.scale + self.shift
 
 class ComposedOperator(Operator):
@@ -353,10 +353,10 @@ class ComposedOperator(Operator):
         self.op1 = op1
         self.op2 = op2
 
-    def __matvec(self, q):
+    def _matvec(self, q):
         return self.op1(self.op2(q))
 
-    def __rmatvec(self, q):
+    def _rmatvec(self, q):
         return self.op2.adjoint_call(self.op1.adjoint_call(q))
 
 class TransposedOperator(Operator):
@@ -364,8 +364,8 @@ class TransposedOperator(Operator):
         super().__init__(op.shape_out, op.shape_in, op.dev, op.self_adjoint)
         self.op = op
 
-    def __matvec(self, q):
-        return self.op.__matvec(q)
+    def _matvec(self, q):
+        return self.op._matvec(q)
 
-    def __rmatvec(self, q):
-        return self.op.__rmatvec(q)
+    def _rmatvec(self, q):
+        return self.op._rmatvec(q)

@@ -31,7 +31,7 @@ class PropagationOperator_LinearForm(Operator):
 #        self.Qs, self.Rs, self.Us = fundamental_matrix(self.jacs)
 
     @torch.no_grad
-    def __matvec(self, q):
+    def _matvec(self, q):
         q_dev = np_to_torch(q).reshape(self.shape_in)[...,None].float() # Shape [B, T, H, 1].
         res = [torch.zeros_like(q_dev[:, 0])]
         for t in range(q_dev.shape[1]):
@@ -40,7 +40,7 @@ class PropagationOperator_LinearForm(Operator):
         return torch.stack(res[1:], 1)[...,0]
 
     @torch.no_grad
-    def __rmatvec(self, q):
+    def _rmatvec(self, q):
         q_dev = np_to_torch(q).reshape(self.shape_out)[...,None].float() # Shape [B, T, H, 1].
         res = [q_dev[:, -1]]
         for t in range(q_dev.shape[1]-2, -1, -1):
@@ -122,7 +122,7 @@ class PropagationOperator_DirectForm(Operator):
         return res # A list
 
     @torch.no_grad
-    def __matvec(self, q):
+    def _matvec(self, q):
         # q is shape (..., B, T, H) where ... can be any dimension.
         # Evaluate forwards(model_f + q) - forwards(model_f).
         q_dev = np_to_torch(q).to(self.dev).float() # [B, T, H]
@@ -136,7 +136,7 @@ class PropagationOperator_DirectForm(Operator):
             return res.mean(0).reshape(q.shape)
         return res
 
-    def __rmatvec(self, q):
+    def _rmatvec(self, q):
         # Adjoint maps grad(l(z(t|x)), z(t|x)) to grad(Loss, z(t|x)) where grad(mean(l(z(t|x))), z(t|x)).
         # So, if we let q(t|x) = grad(l(z(t|x)), z(t|x)), we get the output. To do this, we can let
         # l(z(t|x)) = <z(t|x), q(t|x)>.

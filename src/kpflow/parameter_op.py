@@ -39,14 +39,14 @@ class JThetaOperator(Operator):
         self.vectorize = False # Convert parameters to vectors.
 
     @torch.no_grad
-    def __matvec(self, q):
+    def _matvec(self, q):
         # The input should be a dict of named parameters, e.g. dict(model.named_parameters()).
         # Vectorized input for this call is not supported. Only for adjoint_call is this supported for now.
         inp = (q,) if isinstance(q, dict) else q
         return jvp(self.model_f, (self.params,), inp)[1].reshape(self.shape)  # [B, T, H]
 
     @torch.no_grad
-    def __rmatvec(self, q):
+    def _rmatvec(self, q):
         q_flat = np_to_torch(q).to(self.dev).reshape((-1, q.shape[-1])) # [..., B, T, H] -> [..., H].
 
         # This computes vec @ J(x2).T. It contracts over all axes (e.g. time, batches, hidden) and gives something of same shape as theta.
@@ -61,5 +61,5 @@ class ParameterOperator(Operator):
         super().__init__(hidden.shape, hidden.shape, dev, True)
         self.jtheta_op = JThetaOperator(model_f, inputs, hidden, dev)
 
-    def __matvec(self, q):
+    def _matvec(self, q):
         return self.jtheta_op(self.jtheta_op.adjoint_call(q)) # J_theta @ J_theta^T @ q.
