@@ -29,7 +29,7 @@ def test_linearized_propagation(plot = False):
     # First, test on a linear ODE model, z_{n+1} = W * z_n + x(t). 
     # This has dynamics z_n = Phi(n, 0) z_0 + sum_{i=1}^n Phi(n, i) x_i,
     # where Phi(n, n0) = W^{n - n0}.
-    from .propagation_op import PropagationOperator_LinearForm as POLF
+    from kpflow.propagation_op import PropagationOperator_LinearForm as POLF
 
     B, T, H = 5, 20, 10 # Batch size, Timesteps, Hidden count.
     x = torch.randn(B, T, H) * 1e-3 # Inputs.
@@ -68,10 +68,10 @@ def test_linearized_propagation(plot = False):
     print(" ----- ")
 
 def test_operator_adjoints(plot = True, trials = 50):
-    from .architecture import Model, get_cell_from_model
-    from .parameter_op import ParameterOperator, JThetaOperator
-    from .propagation_op import PropagationOperator_DirectForm, PropagationOperator_LinearForm
-    from .op_common import AveragedOperator, check_adjoint
+    from kpflow.architecture import Model, get_cell_from_model
+    from kpflow.parameter_op import ParameterOperator, JThetaOperator
+    from kpflow.propagation_op import PropagationOperator_DirectForm, PropagationOperator_LinearForm
+    from kpflow.op_common import AveragedOperator, check_adjoint
 
     # Test that the adjoint_call of the operators is indeed the adjoint, i.e. that 
     # <A x, y> = <x, A* y> for the parameter and propagation operators A.
@@ -105,7 +105,32 @@ def test_operator_adjoints(plot = True, trials = 50):
         plt.suptitle('0 = |<A x, y> - <x, A* y>| Check')
         plt.tight_layout()
 
+def test_projector_partial_trace_effdim():
+    # Make the projector |Y><X| for random matrices, X, Y of shape (m, n)
+    # Check tr_n(|Y><X|) = Y X^T (m, m) matrix and tr_m(|Y><X|) = Y^T X (n, n) matrix. 
+    # Also check effdim_m(|Y><X|) = effrank(Y X^T) likewise for effdim_n.
+    from kpflow.op_common import Projector, MatrixWrapper
+    m, n = (10, 30)
+    X,Y = torch.randn((m, n)), torch.rand((m, n))
+    proj = Projector(X, Y) # proj(Q) = <Q, X>_F * Y projection
+
+    V = X / np.linalg.norm(X, ord = 'fro')**2
+    print(f'|Y><X|(X / ||X||) = Y, Frobenius relative error: {relative_error(Y, proj(V))}') 
+
+    true_tr_n = MatrixWrapper(Y @ X.T)
+    tr_n = proj.partial_trace(1).like(true_tr_n)
+    print(f'Check tr_n(|Y><X|) = Y X^T, Frobenius relative error: {true_tr_n.compare(tr_n, nsamp = 50)}')
+
+    true_tr_m = MatrixWrapper(Y.T @ X)
+    tr_m = proj.partial_trace(0).like(true_tr_m)
+    print(f'Check tr_m(|Y><X|) = Y^T X, Frobenius relative error: {true_tr_m.compare(tr_m, nsamp = 50)}')
+
+
+
+
 if __name__ == '__main__':
+    test_projector_partial_trace_effdim()
+    aojsdijsa
     test_operator_adjoints()
     test_linearized_propagation()
     plt.show()

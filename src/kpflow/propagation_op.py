@@ -48,6 +48,9 @@ class PropagationOperator_LinearForm(Operator):
 
         return torch.stack(res, 1)[...,0].flip(1) # Reverse time.
 
+    def __str__(self):
+        return f"P{tuple(self.shape_in)}"
+
 ## Implements P P^T in a stable efficient way.
 #class PropagationGramOperator(Operator):
 #    def __init__(self, model_f, inputs, hidden, dev = 'cpu'):
@@ -103,6 +106,9 @@ class PropagationOperator_DirectForm(Operator):
             h.requires_grad_()
             h.retain_grad()
 
+        self.batched_call = self._matvec
+        self.batched_adjoint_call = self._rmatvec
+
     # Evaluate model(f + q) where f is the original model, q is a perturbation to the forcing term.
     def evaluate_model(self, q_dev):
 #        res = []
@@ -126,21 +132,14 @@ class PropagationOperator_DirectForm(Operator):
         # q is shape (..., B, T, H) where ... can be any dimension.
         # Evaluate forwards(model_f + q) - forwards(model_f).
         q_dev = np_to_torch(q).to(self.dev).float() # [B, T, H]
-        trace_form = (q.shape[-3] == 1 and self.x.shape[0] > 1)
-        if trace_form:
-            q_dev = torch.cat([q_dev] * self.x.shape[0], 0)
-
         eval_with_perb = self.evaluate_model(q_dev)
         res = torch.stack(eval_with_perb, -2) - torch.stack(self.baseline_eval, -2)
-        if trace_form:
-            return res.mean(0).reshape(q.shape)
         return res
 
     def _rmatvec(self, q):
         # Adjoint maps grad(l(z(t|x)), z(t|x)) to grad(Loss, z(t|x)) where grad(mean(l(z(t|x))), z(t|x)).
         # So, if we let q(t|x) = grad(l(z(t|x)), z(t|x)), we get the output. To do this, we can let
         # l(z(t|x)) = <z(t|x), q(t|x)>.
-        trace_form = (q.shape[-3] == 1 and self.x.shape[0] > 1)
 #        for h in self.baseline_eval:
 #            if h.grad is not None:
 #                h.grad.zero_() # Zero out previous grads in there.
@@ -156,8 +155,6 @@ class PropagationOperator_DirectForm(Operator):
         surrogate_loss = total.sum((-2, -1)) 
         surrogate_loss.backward(retain_graph=True)
         res = torch.stack([h.grad for h in hidden], 1)
-        if trace_form:
-            return res.mean(0).reshape(q.shape)
         return res
 
 #    # Evaluate model(f + q) where f is the original model, q is a perturbation to the forcing term.

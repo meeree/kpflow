@@ -20,21 +20,16 @@ class JThetaOperator(Operator):
 
         inputs = np_to_torch(inputs).to(dev)
         hidden = np_to_torch(hidden).to(dev)
-        self.shape = hidden.shape
-        x_flat = inputs.reshape((-1, inputs.shape[-1]))
+        self.x_flat = inputs.reshape((-1, inputs.shape[-1]))
 
-        # hidden should be shape [B, T, H].
-        # Assume h(t) = f(h(t-1), x(t)), h(0) := h_0.
-        # So, need x(t), h(t-1), i.e. shift times back one. 
-        hidden_shift = hidden
-        hidden_shift[:, 1:] = hidden[:, :-1]
-        hidden_shift[:, 0] = (0. if h_0 is None else np_to_torch(h_0).to(dev))
-        h_flat = hidden_shift.reshape((-1, hidden.shape[-1]))
+        self.h_flat = hidden.reshape((-1, hidden.shape[-1]))
+
         def func_param_only(params):
-            return functional_call(model_f, params, (x_flat, h_flat)) # Turn model into a functor accepting parameters as an argument.
+#            return torch.tanh(self.h_flat) @ params['weight_hh'].T + self.x_flat @ params['weight_ih'].T
+            return functional_call(model_f, params, (self.x_flat, self.h_flat)) # Turn model into a functor accepting parameters as an argument.
 
         self.model_f = func_param_only
-        self.params = dict(model_f.to(dev).named_parameters())
+        self.params = {name: p.detach().clone().requires_grad_(True).to(dev) for name, p in model_f.named_parameters()}
 
         self.vectorize = False # Convert parameters to vectors.
 
@@ -43,7 +38,7 @@ class JThetaOperator(Operator):
         # The input should be a dict of named parameters, e.g. dict(model.named_parameters()).
         # Vectorized input for this call is not supported. Only for adjoint_call is this supported for now.
         inp = (q,) if isinstance(q, dict) else q
-        return jvp(self.model_f, (self.params,), inp)[1].reshape(self.shape)  # [B, T, H]
+        return jvp(self.model_f, (self.params,), inp)[1].reshape(self.shape_out)  # [B, T, H]
 
     @torch.no_grad
     def _rmatvec(self, q):
@@ -62,4 +57,8 @@ class ParameterOperator(Operator):
         self.jtheta_op = JThetaOperator(model_f, inputs, hidden, dev)
 
     def _matvec(self, q):
-        return self.jtheta_op(self.jtheta_op.adjoint_call(q)) # J_theta @ J_theta^T @ q.
+        # Intermdiately jtheta_op produces a dict! So use _rmatvec, _matvec, not __call__, adjoint_call to not enforce shaping.
+        return self.jtheta_op._matvec(self.jtheta_op._rmatvec(q)) # J_theta @ J_theta^T @ q.
+
+    def __str__(self):
+        return f"K{tuple(self.shape_in)}"

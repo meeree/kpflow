@@ -56,7 +56,7 @@ def op_alignment(A, B, nsamp=20, full_output=False):
     if full_output:
         reduction = lambda x: torch.cumsum(torch.sum(x, 0), 0) 
     return (reduction(AS * BS) / (reduction(AS * AS) * reduction(BS * BS))**0.5).item()
-
+                                                                                                                                
 @torch.no_grad()
 def op_alignment_adj_only(J_1, J_2, K_1, K_2, nsamp=20, full_output=False):
     J_1_flat, J_2_flat = J_1.flatten(), J_2.flatten() # Flatten input and output shapes. 

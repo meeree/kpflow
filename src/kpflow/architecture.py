@@ -86,8 +86,8 @@ class BasicRNN(nn.Module):
 
         hidden = [self.cell(x_itr[0], h)]
         for x_t in x_itr[1:]:
-            hidden.append(self.cell(x_t, hidden[-1]).clone())
-        return torch.stack(hidden, (1 if self.batch_first else 0)), hidden[-1][None, :, :]
+            hidden.append(self.cell(x_t, hidden[-1].clone()))
+        return torch.stack(hidden, (1 if self.batch_first else 0)), None
 
 # Get a GRUCell from the model above with the same parameters.
 def get_cell_from_model(model):
