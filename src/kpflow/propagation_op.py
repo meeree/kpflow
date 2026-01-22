@@ -11,12 +11,6 @@ from .op_common import Operator
 np_to_torch = lambda x: x if torch.is_tensor(x) else torch.from_numpy(x)
 torch_to_np = lambda x: x if not torch.is_tensor(x) else x.detach().cpu().numpy()
 
-# Compute the entire operator. If there are T discrete timesteps and B batch trials, then the discretized operator is a (B*T, B*T) matrix (a flattened (B, T, B, T) tensor). 
-# It has no H dimension since it acts as a scalar over the neuron index (see Theorem in our paper).
-#
-# Features is a list of relevant features for the kernel.
-# Explictly, K(t, b, t0, b0) = sum_{f=1}^F innerproduct(features[f, b, t], features[f, b0, t0]) / B.
-# For an RNN, f(z,x) = -z + W sigma(z) + W_{in} x(t), the features are [x(t), sigma(z(t))].
 class PropagationOperator_LinearForm(Operator):
     def __init__(self, model_f, inputs, hidden, dev = 'cpu'):
         super().__init__(hidden.shape, hidden.shape, dev)
@@ -28,6 +22,7 @@ class PropagationOperator_LinearForm(Operator):
         model_f_dev = model_f.to(dev)
         model_f_hidden_only = partial(model_f_dev, inputs_flat)
         self.jacs = compute_jacobians(model_f_hidden_only, hidden, to_np = False) # [B, T, H, H]
+        self.jacs_T = self.jacs.swapaxes(-2, -1) # View
 #        self.Qs, self.Rs, self.Us = fundamental_matrix(self.jacs)
 
     @torch.no_grad
@@ -44,7 +39,7 @@ class PropagationOperator_LinearForm(Operator):
         q_dev = np_to_torch(q).reshape(self.shape_out)[...,None].float() # Shape [B, T, H, 1].
         res = [q_dev[:, -1]]
         for t in range(q_dev.shape[1]-2, -1, -1):
-            res.append(q_dev[:, t] + self.jacs[:, t+1].swapaxes(-2,-1) @ res[-1])
+            res.append(q_dev[:, t] + self.jacs_T[:, t+1] @ res[-1])
 
         return torch.stack(res, 1)[...,0].flip(1) # Reverse time.
 

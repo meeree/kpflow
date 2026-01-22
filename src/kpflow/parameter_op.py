@@ -20,12 +20,13 @@ class JThetaOperator(Operator):
 
         inputs = np_to_torch(inputs).to(dev)
         hidden = np_to_torch(hidden).to(dev)
-        self.x_flat = inputs.reshape((-1, inputs.shape[-1]))
 
-        self.h_flat = hidden.reshape((-1, hidden.shape[-1]))
+        self.x_flat = inputs.reshape((-1, inputs.shape[-1]))
+        h_0 = torch.zeros_like(hidden[:, :1]) if h_0 is None else h_0
+        hidden_slide = torch.cat((h_0,hidden), 1)
+        self.h_flat = hidden_slide[:, :-1].reshape((-1, hidden.shape[-1]))
 
         def func_param_only(params):
-#            return torch.tanh(self.h_flat) @ params['weight_hh'].T + self.x_flat @ params['weight_ih'].T
             return functional_call(model_f, params, (self.x_flat, self.h_flat)) # Turn model into a functor accepting parameters as an argument.
 
         self.model_f = func_param_only

@@ -5,7 +5,7 @@ import math
 import torch
 from math import prod
 
-np_to_torch = lambda x: x if torch.is_tensor(x) else torch.from_numpy(x)
+np_to_torch = lambda x: torch.tensor(x) #x if torch.is_tensor(x) else torch.from_numpy(x)
 torch_to_np = lambda x: x if not torch.is_tensor(x) else x.detach().cpu().numpy()
 
 class Operator(ABC):
@@ -113,7 +113,7 @@ class Operator(ABC):
         matmat = lambda q_vec : np.moveaxis(op_np_flat.batched_call(np.moveaxis(q_vec, -1, 0)), 0, -1) # scipy expects columns for batching, while my batching uses first dim.
         rmatmat = lambda q_vec : np.moveaxis(op_np_flat.batched_adjoint_call(np.moveaxis(q_vec, -1, 0)), 0, -1) 
         return LinearOperator(
-            (op_np_flat.shape_out, op_np_flat.shape_in),
+            (op_np_flat.shape_out[0], op_np_flat.shape_in[0]),
             matvec = op_np_flat, rmatvec = op_np_flat.adjoint_call, 
             matmat = matmat, rmatmat = rmatmat,
             dtype = dtype
@@ -132,19 +132,26 @@ class Operator(ABC):
         return trace_hupp_op(self, nsamp = nsamp)
 
     def fro_norm(self, nsamp = 21):
-        return self.gram().trace(nsamp = nsamp)**0.5
+        squared = self.gram().trace(nsamp = nsamp)
+        squared = max(0., squared) # Clamp if negative. If we're getting small negative values (e.g. -1e-6) this indicates the norm is zero, it's just random variance. 
+        return squared**0.5
 
     def alignment(self, op, nsamp = 21):
-        from .trace_esimation import cos_similarity
-        return cos_similarity(self, op)
+        from .trace_estimation import op_alignment
+        return op_alignment(self, op, nsamp = nsamp)
 
-    def svd(self, ncomps, trace_dims = None, compute_vecs = False, tol = 1e-8):
+    def svd(self, ncomps, keep_dims = None, compute_vecs = False, tol = 1e-8):
         # 1. Form grammian G = W W^*
-        # 2. Form G_avg = partial_average(G, trace_dims) if trace_dims not None
+        # 2. Form G_avg = partial_average(G, keep_dims) if keep_dims not None
         # 3. Use U Sigma^2 U^T = eigsh(G_avg)
         # 4. Return diag(Sigma) or U, diag(Sigma) depending on compute_vecs
         G = self.gram()
-        G_avg = G if trace_dims is None else G.partial_avg(trace_dims)
+        G_avg = G
+        if keep_dims is not None:
+            keep_dims = (keep_dims,) if isinstance(keep_dims, int) else keep_dims
+            trace_dims = tuple([dim for dim in range(len(self.shape_in)) if not (dim in keep_dims or (dim == len(self.shape_in)-1 and -1 in keep_dims))])
+            G_avg = G.partial_avg(trace_dims)
+
         ret = G_avg.eigsh(ncomps, compute_vecs = compute_vecs, tol = tol)
         if compute_vecs:
             ret = (np.where(ret[0] < tol, 0, ret[0]), ret[1])
@@ -152,11 +159,13 @@ class Operator(ABC):
         ret = np.where(ret < tol, 0, ret)
         return ret**0.5
 
-    def effdim(self, keep_dims, nsamp = 21, ratio = False, grammian = True):
+    def effdim(self, keep_dims=None, nsamp = 21, ratio = False, grammian = True):
         # Use some trickery: 
         # assuming P is (m, n) and we partial average n,
         # effdim_{m}(P) = m * cos_similarity(P @ P.T, Identity)
         from .trace_estimation import op_alignment
+        if keep_dims is None:
+            keep_dims = (i for i in range(len(self.shape_in)))
         keep_dims = (keep_dims,) if isinstance(keep_dims, int) else keep_dims
         trace_dims = tuple([dim for dim in range(len(self.shape_in)) if not (dim in keep_dims or (dim == len(self.shape_in)-1 and -1 in keep_dims))])
 
@@ -178,13 +187,17 @@ class Operator(ABC):
         return tuple(dims)
 
     def gram(self):
-        return GramOperator(self)
+        return GramOperator(self) # self @ self.T
 
-    def reshape(self, new_shape_in, new_shape_out):
+    def symm_part(self):
+        return SymmetricPartOperator(self) # (self + self.T) / 2
+
+    def reshape(self, new_shape_in, new_shape_out=None):
+        if new_shape_out is None:
+            return OperatorView(self, new_shape_in, new_shape_in) 
         return OperatorView(self, new_shape_in, new_shape_out) 
 
     def like(self, op): # Reshape to be same shape as a new operator
-        print(op.shape_in)
         return OperatorView(self, op.shape_in, op.shape_out)
 
     def tprod_like(self, op, op_match_shape): # A convenient way to make tensor products and make shapes match :)
@@ -203,12 +216,16 @@ class Operator(ABC):
     def full_matrix(self):
         # Note this functions should only be used when the operator is small enough to compute!
         flat = self.flatten()
-        mat = self.batched_call(torch.eye(prod(flat.shape_in)))
-        return mat
+        mat = self.batched_call(torch.eye(flat.shape_in[0]))
+        return mat.squeeze().T
 
-    def compare(self, op2, nsamp = 21, method = 'rel'):
+    def compare(self, op2, nsamp = 21, method = 'rel', atol = 1e-8):
         nm = (self - op2).fro_norm(nsamp = nsamp)
-        return nm if method == 'abs' else nm / self.fro_norm(nsamp = nsamp)
+        if method == 'abs':
+            return nm
+
+        # Roll back to atol if both operators are close to zero.
+        return nm / max(atol, self.fro_norm(nsamp = nsamp), op2.fro_norm(nsamp = nsamp))
 
     def set_debug(self, val = True):
         if val:
@@ -416,7 +433,7 @@ class PartialTrace(Operator):
 
 class AffineTransformedOperator(Operator):
     def __init__(self, op, scale = 1., shift = 0.):
-        super().__init__(op.shape, op.shape, op.dev, op.self_adjoint)
+        super().__init__(op.shape_in, op.shape_out, op.dev, op.self_adjoint)
         self.op = op
         self.scale = scale
         self.shift = shift
@@ -458,7 +475,7 @@ class ComposedOperator(Operator):
     def __str__(self):
         return f"({self.op1} \u2218 {self.op2})"
 
-class GramOperator(Operator): # op @ op.T(). Made this it's own class just to have pretty printing.
+class GramOperator(Operator): # op @ op.T. Made this it's own class just to have pretty printing.
     def __init__(self, op):
         super().__init__(op.shape_out, op.shape_out, dev = op.dev, self_adjoint = True)
         self.op = op
@@ -474,6 +491,18 @@ class GramOperator(Operator): # op @ op.T(). Made this it's own class just to ha
 
     def effdim(self, keep_dims, nsamp = 21):
         return super().effdim(keep_dims, nsamp, grammian = False) # So effdim(GramOperator(op)) = effdim(op). This is stylistic mostly. 
+
+class SymmetricPartOperator(Operator): # op + op.T
+    def __init__(self, op):
+        assert(op.shape_in == op.shape_out)
+        super().__init__(op.shape_in, op.shape_in, dev = op.dev, self_adjoint = True)
+        self.op = op
+
+    def _matvec(self, q):
+        return (self.op(q) + self.op.adjoint_call(q)) * 0.5
+
+    def __str__(self):
+        return f"SymPart({self.op})"
 
 class TransposedOperator(Operator):
     def __init__(self, op):

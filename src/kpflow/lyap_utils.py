@@ -13,8 +13,9 @@ def compute_jacobians(model_f, hidden, to_np = False):
     # Note that d(sum_t sum_b f(h(t,b))) / dh(t,b) = df(h(t,b,)) / dh(t,b), i.e. we can sum over all time and batches and get same partials.
 
     # model_f should just accept a single input z. If it accepts multiple inputs, use functools.partial or a lambda!
+    hidden_slide = torch.cat((torch.zeros_like(hidden[:, :1]), hidden), 1)
     H = hidden.shape[-1]
-    hidden_flat = hidden.reshape((-1, H))
+    hidden_flat = hidden_slide[:, :-1].reshape((-1, H))
 
     model_f_sum = lambda z: model_f(z).sum(0)
     jacs = torch.autograd.functional.jacobian(model_f_sum, hidden_flat.detach().clone())
