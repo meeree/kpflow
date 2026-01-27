@@ -67,6 +67,22 @@ def test_linearized_propagation(plot = False):
     print(relative_error(guess_z, hidden)) 
     print(" ----- ")
 
+    from kpflow.frechet_op import FrechetOperator
+    from kpflow.op_common import IdentityOperator as Id
+    print("Check Pop Inverse if Frechet Operator:")
+    frech = FrechetOperator(model_f, 0.*x, hidden)
+    err1 = (frech @ polf).compare(Id(hidden.shape)) 
+    err2 = (polf @ frech).compare(Id(hidden.shape)) 
+    print(max(err1, err2)) 
+    print(" ----- ")
+
+def get_p_and_inv(model, inputs, hidden):
+    cell = get_cell_from_model(model)
+    pop = PropagationOperator_LinearForm(cell, inputs, hidden)
+    pop_inv = FrechetOperator(cell, inputs, hidden)
+    return pop, pop_inv
+
+
 def test_operator_adjoints(plot = True, trials = 50):
     from kpflow.architecture import Model, get_cell_from_model
     from kpflow.parameter_op import ParameterOperator, JThetaOperator
@@ -129,9 +145,8 @@ def test_projector_partial_trace_effdim():
 
 
 if __name__ == '__main__':
-    test_projector_partial_trace_effdim()
-    aojsdijsa
-    test_operator_adjoints()
     test_linearized_propagation()
+    test_projector_partial_trace_effdim()
+    test_operator_adjoints()
     plt.show()
 

@@ -103,7 +103,7 @@ class Operator(ABC):
 
     def rayleigh_coef(self, q):
         Kq = self(q) # [..., B, T, H]
-        return (Kq * q).sum((-3, -2, -1)) / (q * q).sum((-3, -2, -1))
+        return ((Kq * q).sum((-3, -2, -1)) / (q * q).sum((-3, -2, -1))).item()
 
     def to_scipy(self, dtype = float):
         # Convert to a scipy LinearOperator. Shape should be the shape of a typical input to __call__.
@@ -158,6 +158,9 @@ class Operator(ABC):
             return ret[0]**0.5, ret[1]
         ret = np.where(ret < tol, 0, ret)
         return ret**0.5
+
+    def op_norm(self, keep_dims = None, tol = 1e-8):
+        return self.svd(1, keep_dims = keep_dims, compute_vecs = False, tol = tol)[0]
 
     def effdim(self, keep_dims=None, nsamp = 21, ratio = False, grammian = True):
         # Use some trickery: 
