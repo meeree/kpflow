@@ -3,7 +3,7 @@
 # *K*-*P* Flow:
 Analysis of gradient descent learning in general recurrent models using operators
 
-See accompanying paper: https://arxiv.org/abs/2507.06381
+See accompanying theory paper (soon to be updated with a full rewrite): https://arxiv.org/abs/2507.06381 and paper on the RNLA aspect of the code: https://arxiv.org/abs/2511.10796
 
 # Installation:
 In the root directory run `pip install -e .`
