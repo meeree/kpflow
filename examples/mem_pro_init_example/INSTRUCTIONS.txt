@@ -1,0 +1,3 @@
+First, train the model using train_cases.py, which you can configure (run --help)
+Next, record the data for the run, running record_stats.py --file <SAVE_PATH>, e.g., --file data_lr=0.001
+Finally, generate plots by running interpret_stats.py --file <SAVE_PATH>, with the same file path as before.

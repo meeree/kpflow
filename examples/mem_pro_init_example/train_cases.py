@@ -14,7 +14,6 @@ args.model = 'rnn'
 args.task_str = 'memory_pro'
 args.init_level = 1.
 args.checkpoint = ''
-args.optim = 'sgd'
 args.tol = 1e-3
 args.duration = 90
 args.grad_clip = None
@@ -23,12 +22,13 @@ args.grad_clip = None
 g = 1.
 
 # Setup hard-coded task and models and filenames and send them to train.py
-ping_dir(f'data_lr={args.lr}')
+path = f'data_grad_clip_lr={args.lr}/'
+ping_dir(path)
 task = CustomTaskWrapper('memory_pro', 500, use_noise = True, n_samples = 5000, T = 90)
 models = {
-    f'data_lr={args.lr}/rnn_mempro_nfps={nfps}_g={g}': 
+    f'{path}/{args.optim}_rnn_mempro_nfps={nfps}_g={g}': 
         construct_model(g = g, fps = [torch.randn(size = (256,)) for _ in range(nfps)], dt = .7)
-    for nfps in [0, 2, 5, 15, 30, 100]
+    for nfps in [0, 5] 
 }
 print('Models : ', list(models.keys()))
 

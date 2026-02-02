@@ -103,7 +103,7 @@ class Operator(ABC):
 
     def rayleigh_coef(self, q):
         Kq = self(q) # [..., B, T, H]
-        return ((Kq * q).sum((-3, -2, -1)) / (q * q).sum((-3, -2, -1))).item()
+        return (Kq * q).sum() / (q * q).sum()
 
     def to_scipy(self, dtype = float):
         # Convert to a scipy LinearOperator. Shape should be the shape of a typical input to __call__.
@@ -140,27 +140,28 @@ class Operator(ABC):
         from .trace_estimation import op_alignment
         return op_alignment(self, op, nsamp = nsamp)
 
-    def svd(self, ncomps, keep_dims = None, compute_vecs = False, tol = 1e-8):
+    def svd(self, ncomps, keep_dims = None, compute_vecs = False, tol = 1e-8, grammian = True):
         # 1. Form grammian G = W W^*
         # 2. Form G_avg = partial_average(G, keep_dims) if keep_dims not None
         # 3. Use U Sigma^2 U^T = eigsh(G_avg)
         # 4. Return diag(Sigma) or U, diag(Sigma) depending on compute_vecs
-        G = self.gram()
+        G = self.gram() if grammian else self # For a matrix like A A^T, why form grammian?
         G_avg = G
         if keep_dims is not None:
             keep_dims = (keep_dims,) if isinstance(keep_dims, int) else keep_dims
             trace_dims = tuple([dim for dim in range(len(self.shape_in)) if not (dim in keep_dims or (dim == len(self.shape_in)-1 and -1 in keep_dims))])
             G_avg = G.partial_avg(trace_dims)
-
+    
+        rescale = (lambda x : x**0.5) if grammian else (lambda x : x) 
         ret = G_avg.eigsh(ncomps, compute_vecs = compute_vecs, tol = tol)
         if compute_vecs:
             ret = (np.where(ret[0] < tol, 0, ret[0]), ret[1])
-            return ret[0]**0.5, ret[1]
+            return rescale(ret[0]), ret[1]
         ret = np.where(ret < tol, 0, ret)
-        return ret**0.5
+        return rescale(ret)
 
-    def op_norm(self, keep_dims = None, tol = 1e-8):
-        return self.svd(1, keep_dims = keep_dims, compute_vecs = False, tol = tol)[0]
+    def op_norm(self, grammian = True, keep_dims = None, tol = 1e-8):
+        return self.svd(1, grammian = grammian, keep_dims = keep_dims, compute_vecs = False, tol = tol)[0]
 
     def effdim(self, keep_dims=None, nsamp = 21, ratio = False, grammian = True):
         # Use some trickery: 

@@ -46,7 +46,7 @@ def eval_model_ode_mode(g, fps = [], ts = 100, dt = 1., h = None, model_dict = N
     if h is None:
         h = torch.normal(torch.zeros((inputs.shape[0], 256)), 1.)
     h = torch.zeros_like(h)
-    return model, model(inputs, h = h)[1].detach().numpy()
+    return model, model(inputs, h0 = h)[1].detach().numpy()
 
 def produce_plot(nfps, gmin = 0., gmax = 2., nruns = 50, twod = False):
     gs = [1.0, 1.5, 1.8, 1.9]
@@ -71,26 +71,36 @@ def produce_plot(nfps, gmin = 0., gmax = 2., nruns = 50, twod = False):
             self.net = net
 
         def forward(self, x):
-            return self.net(x)[0]
+            return self.net(x)[1]
 
-    bipart = lambda x : x.reshape((-1, x.shape[-1])) # Partition the full 3-tensor space into a time-trials part and a physical part.
-    hidden = torch.from_numpy(activity)
-#    V = torch.cat((bipart(hidden), bipart(inputs)), -1)
-    V = bipart(hidden)
-    U,S,_ = torch.svd(V)
-    var_rat = S**2 / (S**2).sum()
-#    plt.plot(np.cumsum(var_rat), color = colors[len(fps)])
-#    plt.subplot(1,5,len(fps)+1)
+#    bipart = lambda x : x.reshape((-1, x.shape[-1])) # Partition the full 3-tensor space into a time-trials part and a physical part.
+#    hidden = torch.from_numpy(activity)
+##    V = torch.cat((bipart(hidden), bipart(inputs)), -1)
+#    V = bipart(hidden)
+#    U,S,_ = torch.svd(V)
+#    var_rat = S**2 / (S**2).sum()
+##    plt.plot(np.cumsum(var_rat), color = colors[len(fps)])
+##    plt.subplot(1,5,len(fps)+1)
+#    lns = []
+#    for idx in range(5):
+#        mode = U[:,idx].reshape(hidden.shape[:-1])
+#        plt_lines = plt.plot((S[idx]**2 * mode.T).detach(), color = colors[idx])
+#        lns.append(plt_lines[0])
+##        plt.plot((S[idx]**2 * mode.T).detach(), color = colors[len(fps)])
+#    return lns
+
+
+    ntk = HiddenNTKOperator(GetHidden(model), inputs, activity)
+    S_ntk, vecs_ntk = ntk.svd(3, (0, 1), compute_vecs = True)
     lns = []
-    for idx in range(5):
-        mode = U[:,idx].reshape(hidden.shape[:-1])
-        plt_lines = plt.plot((S[idx]**2 * mode.T).detach(), color = colors[idx])
+    for idx in range(3):
+        mode = vecs_ntk[idx].reshape(activity.shape[:-1])
+        plt_lines = plt.plot(S_ntk[idx]**2 * mode.T, color = colors[idx])
         lns.append(plt_lines[0])
-#        plt.plot((S[idx]**2 * mode.T).detach(), color = colors[len(fps)])
     return lns
 
-
-#   ntk = HiddenNTKOperator(GetHidden(model), inputs, hidden)
+    ln = plt.plot(np.cumsum((S_ntk**2) / (S_ntk**2).sum()))
+    return [ln]
 #   S_ntk, vecs_ntk = ntk.svd(3, (0, 1), compute_vecs = True)
     
     ax = plt.gca()
@@ -122,13 +132,13 @@ if __name__ == '__main__':
     print(inputs.shape)
 
     plt.figure(figsize = (15, 4))
-    for i, nfps in zip(range(4), [0, 1, 2, 5]): 
-        plt.subplot(1, 4, i + 1)#, projection = '3d')
+    for i, nfps in enumerate([0, 5, 30]): 
+        plt.subplot(1, 3, i + 1)#, projection = '3d')
         id = f'{nfps+1} FPs'
-    #    plt.title(id)
+        plt.title(id)
         lns = produce_plot(nfps, nruns = 100)
-        if i == 0:
-            plt.legend(lns, [f'Mode {idx+1}' for idx in range(5)])
+#        if i == 0:
+    #        plt.legend(lns, [f'Mode {idx+1}' for idx in range(5)])
         if i > 2:
             plt.xlabel('Time')
         if i % 3 == 0:

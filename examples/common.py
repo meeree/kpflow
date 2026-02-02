@@ -118,6 +118,7 @@ def imshow_nonuniform(X, Y, Z, nx=100, ny=100, **kwargs):
     from scipy.interpolate import griddata
     xi = np.linspace(X.min(), X.max(), nx)
     yi = np.linspace(Y.min(), Y.max(), ny)
+    print(X.min(), Y.min(), X.max(), Y.max())
     Xi, Yi = np.meshgrid(xi, yi)
     to_grid = lambda z: griddata((X.ravel(), Y.ravel()), z.ravel(), (Xi, Yi), method='linear')
     if len(Z.shape) > 1: # RGBA colors
