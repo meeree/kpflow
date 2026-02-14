@@ -4,9 +4,7 @@ import numpy as np
 import math
 import torch
 from math import prod
-
-np_to_torch = lambda x: torch.tensor(x) #x if torch.is_tensor(x) else torch.from_numpy(x)
-torch_to_np = lambda x: x if not torch.is_tensor(x) else x.detach().cpu().numpy()
+from analysis_utils import np_to_torch, torch_to_np
 
 class Operator(ABC):
     _vmap = True
@@ -59,12 +57,12 @@ class Operator(ABC):
 
     # [..., *shape_in] -> [..., *shape_out] if batch_first
     # [*shape_in, ...] -> [*shape_out, ...] otherwise
-    def batched_call(self, q_batch):
+    def batched_call(self, q_batch, randomness = 'different'):
         self._debug('batched_call, input shape = ', q_batch.shape, 'operator shape = ', self.shape_in, '->', self.shape_out, '; vmap = ', self._vmap) # nop unless debug set (so no slowdown at all)
         q_nice = q_batch.reshape((-1, *self.shape_in)) if self.batch_first else q_batch.reshape((*self.shape_in, -1)).T
         if self._vmap:
             dim = 0 if self.batch_first else -1
-            fn = torch.vmap(self._matvec, in_dims = dim, out_dims = dim)
+            fn = torch.vmap(self._matvec, in_dims = dim, out_dims = dim, randomness = randomness)
             return fn(q_nice)
 
         res = []
@@ -75,12 +73,12 @@ class Operator(ABC):
 
 
     # [D, *shape_out] -> [D, *shape_in]
-    def batched_adjoint_call(self, q_batch):
+    def batched_adjoint_call(self, q_batch, randomness = 'different'):
         self._debug('batched_adjoint_call, input shape = ', q_batch.shape, 'operator.T shape = ', self.shape_out, '->', self.shape_in, '; vmap = ', self._vmap) # nop unless debug set (so no slowdown at all)
         q_nice = q_batch.reshape((-1, *self.shape_out)) if self.batch_first else q_batch.reshape((*self.shape_out, -1)).T
         if self._vmap:
             dim = 0 if self.batch_first else -1
-            fn = torch.vmap(self._rmatvec, in_dims = dim, out_dims = dim)
+            fn = torch.vmap(self._rmatvec, in_dims = dim, out_dims = dim, randomness = randomness)
             return fn(q_nice)
 
         res = []
@@ -315,9 +313,9 @@ class TensorProduct(Operator):
 
 # Combine two operators together.
 class Hadamard(Operator):
-    def __init__(self, op1, op2, comb = 'add', dev = 'cpu'):
+    def __init__(self, op1, op2, comb = 'add'):
         assert ((op1.shape_in == op2.shape_in) and (op1.shape_out == op2.shape_out)), f"(shape_out, shape_in) not the same: op1 {op1.shapes} != op2 {op2.shapes}"
-        super().__init__(op1.shape_in, op1.shape_out, dev, self_adjoint = (op1.self_adjoint and op2.self_adjoint))
+        super().__init__(op1.shape_in, op1.shape_out, op1.dev, self_adjoint = (op1.self_adjoint and op2.self_adjoint))
         self.op1, self.op2 = op1, op2
 
         self.comb_str = {'add': '+', 'sub': '-', 'mul': '\u2297', 'div': '\u2298'}[comb]

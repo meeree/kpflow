@@ -22,7 +22,7 @@ args.grad_clip = None
 g = 1.
 
 # Setup hard-coded task and models and filenames and send them to train.py
-path = f'data_grad_clip_lr={args.lr}/'
+path = f'data_lr={args.lr}/'
 ping_dir(path)
 task = CustomTaskWrapper('memory_pro', 500, use_noise = True, n_samples = 5000, T = 90)
 models = {

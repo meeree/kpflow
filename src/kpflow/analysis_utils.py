@@ -35,11 +35,33 @@ def ping_dir(directory, clear = False):
     else:
         os.mkdir(directory)
 
-def torch_to_np(x):
-    return x.detach().cpu().numpy() if torch.is_tensor(x) else x 
+def np_to_torch(x, dtype = None, device = None):
+    if isinstance(x, (list, tuple)):
+        return type(x)(to_tensor(v, dtype=dtype, device=device) for v in x)
+    if torch.is_tensor(x):
+        t = x
+    elif isinstance(x, (np.ndarray, np.generic)):
+        t = torch.from_numpy(x) if isinstance(x, np.ndarray) else torch.tensor(x.item())
+    else:  # python scalar / array-like
+        t = torch.tensor(x)
 
-def np_to_torch(x, dev = 'cpu'):
-    return x if torch.is_tensor(x) else torch.from_numpy(x).to(dev)
+    if dtype is not None:
+        t = t.to(dtype=dtype)
+    if device is not None:
+        t = t.to(device=device)
+    return t
+
+def torch_to_np(x, dtype = None, device = None):
+    if isinstance(x, (list, tuple)):
+        return type(x)(to_numpy(v) for v in x)
+    if isinstance(x, np.ndarray):
+        return x
+    if torch.is_tensor(x):
+        return x.detach().cpu().numpy()
+    if isinstance(x, np.generic):  # numpy scalar
+        return np.asarray(x)
+    # python scalar / array-like
+    return np.asarray(x)
 
 def load_sweep_checkpoints(root):
     # Similar to load_checkpoints but for a sweep, which consists of a grid of hyperparameters. 

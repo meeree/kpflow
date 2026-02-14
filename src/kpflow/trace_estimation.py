@@ -25,7 +25,7 @@ def trace_hupp_op(A, nsamp):
 
     Q, _ = torch.linalg.qr(call(S))
     prod = G - Q @ (Q.T @ G)
-    return (torch.trace(call(Q).T @ Q) + (3./nsamp) * torch.trace(call(prod).T @ prod)).item()
+    return (torch.trace(call(Q).T @ Q) + (3./nsamp) * torch.trace(call(prod).T @ prod))
 
 # Adjoint only hutch++.
 @torch.no_grad()
