@@ -61,13 +61,6 @@ class Model(nn.Module):
             for name, param in self.named_parameters():
                 param_grads[name] = param.grad.clone()
             return hidden, adjoint, err, out, loss_unreduced, loss, param_grads
-
-#        if return_param_grads:
-#            param_grads = {}
-#            for name, param in cell.named_parameters():
-#                param_grads[name] = param.grad.clone()
-#            
-#            return hidden, adjoint, err, out, loss_unreduced, loss, param_grads
         
         return hidden, adjoint, err, out, loss_unreduced, loss
 

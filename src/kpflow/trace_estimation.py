@@ -18,8 +18,8 @@ def trace_hupp(A, nsamp):
 def trace_hupp_op(A, nsamp):
     A_flat = A.flatten() # Flatten input and output shapes. 
     d = A_flat.shape_in[0]
-    S = torch.randint(2, size=(d,nsamp//3)).float() * 2 - 1 # Either 1 or -1
-    G = torch.randint(2, size=(d,nsamp//3)).float() * 2 - 1 # Either 1 or -1
+    S = torch.randint(2, size=(d,nsamp//3)).float().to(A.dev) * 2 - 1 # Either 1 or -1
+    G = torch.randint(2, size=(d,nsamp//3)).float().to(A.dev) * 2 - 1 # Either 1 or -1
 
     call = lambda x: A_flat.batched_call(x.T).T
 
@@ -45,7 +45,7 @@ def op_alignment(A, B, nsamp=20, full_output=False):
     A_flat = A.flatten() # Flatten input and output shapes. 
     B_flat = B.flatten() 
     d = A_flat.shape_in[0]
-    G = torch.randn(d, nsamp)
+    G = torch.randn(d, nsamp).to(A.dev)
     Q, _ = torch.linalg.qr(G) # Random orthonormal vectors.
     S = (d / nsamp)**0.5 * Q          
     AS = A_flat.batched_call(S.T).T # This is BY FAR the bottle-neck.

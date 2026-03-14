@@ -15,7 +15,7 @@ torch_to_np = lambda x: x if not torch.is_tensor(x) else x.detach().cpu().numpy(
 
 class FullJThetaOperator(Operator):
     def __init__(self, model, inputs, hidden, dev = 'cpu', params_to_vec = False):
-        nparams = sum(p.numel() for _,p in model.named_parameters())
+        nparams = sum(p.numel() for _,p in model.named_parameters() if p.requires_grad)
         super().__init__(nparams, hidden.shape, dev = dev, self_adjoint = False, force_shape = True)
 
         inputs = np_to_torch(inputs).to(dev)
@@ -31,11 +31,11 @@ class FullJThetaOperator(Operator):
                 return functional_call(self.model, params, self.inputs)
 
         self.model = FnParamsOnly(model_dev, inputs)
-        self.params = dict(model_dev.named_parameters())
+        self.params = {name: p.detach().clone().requires_grad_(True).to(dev) for name, p in model_f.named_parameters() if p.requires_grad}
         self.vectorize = params_to_vec # Convert parameters to vectors.
         self.vjp_fn = vjp(self.model, self.params)[1]
-        if dev !='cpu':
-            self.vjp_fn = torch.compile(self.vjp_fn)
+#        if dev !='cpu':
+#            self.vjp_fn = torch.compile(self.vjp_fn)
 
     def vec_to_param(self, vec):
         # Convert a vectorized parameter vec(theta) in R^m to a dictionary real parameter in theta in P.

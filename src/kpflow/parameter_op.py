@@ -15,8 +15,8 @@ torch_to_np = lambda x: x if not torch.is_tensor(x) else x.detach().cpu().numpy(
 # Efficient tensor NTK-style implementation using python vjp and jvp functions.
 class JThetaOperator(Operator):
     def __init__(self, model_f, inputs, hidden, dev = 'cpu', h_0 = None):
-        nparams = sum(p.numel() for _,p in model_f.named_parameters())
-        super().__init__(nparams, hidden.shape, dev)
+        nparams = sum(p.numel() for _,p in model_f.named_parameters() if p.requires_grad)
+        super().__init__(nparams, hidden.shape, dev, force_shape = False)
 
         inputs = np_to_torch(inputs).to(dev)
         hidden = np_to_torch(hidden).to(dev)
@@ -30,15 +30,29 @@ class JThetaOperator(Operator):
             return functional_call(model_f, params, (self.x_flat, self.h_flat)) # Turn model into a functor accepting parameters as an argument.
 
         self.model_f = func_param_only
-        self.params = {name: p.detach().clone().requires_grad_(True).to(dev) for name, p in model_f.named_parameters()}
+        self.params = {name: p.detach().clone().requires_grad_(True).to(dev) for name, p in model_f.named_parameters() if p.requires_grad}
 
         self.vectorize = False # Convert parameters to vectors.
+
+    def vec_to_param(self, vec):
+        # Convert a vectorized parameter vec(theta) in R^m to a dictionary real parameter in theta in P.
+        out = type(self.params)()  # preserves dict vs OrderedDict
+        off = 0
+        for k, t in self.params.items():
+            n = t.numel()
+            out[k] = vec[..., off:off+n].view(*vec.shape[:-1], *t.shape).to(dtype=t.dtype, device=t.device)
+            off += n
+        if off != vec.shape[-1]:
+            raise ValueError(f"Vector length {vec.shape[-1]} != total params {off}")
+        return out
 
     @torch.no_grad
     def _matvec(self, q):
         # The input should be a dict of named parameters, e.g. dict(model.named_parameters()).
         # Vectorized input for this call is not supported. Only for adjoint_call is this supported for now.
         inp = (q,) if isinstance(q, dict) else q
+        if self.vectorize:
+            inp = (self.vec_to_param(q),)
         return jvp(self.model_f, (self.params,), inp)[1].reshape(self.shape_out)  # [B, T, H]
 
     @torch.no_grad

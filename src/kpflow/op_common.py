@@ -4,7 +4,13 @@ import numpy as np
 import math
 import torch
 from math import prod
-from analysis_utils import np_to_torch, torch_to_np
+from .analysis_utils import np_to_torch, torch_to_np
+
+def _safe_reshape(x, new_shape):
+    return x if not isinstance(x, torch.Tensor) else x.reshape(new_shape)
+
+def _safe_shape(x):
+    return None if not isinstance(x, torch.Tensor) else x.shape
 
 class Operator(ABC):
     _vmap = True
@@ -16,7 +22,7 @@ class Operator(ABC):
         self.dev = dev
         self.self_adjoint = self_adjoint
         self.batch_first = batch_first
-        self.shapes = (self.shape_out, self.shape_in) # Out then in, to agree with intution of matrices (m,n) -> input size n, output size m
+        self.shapes = (self.shape_in, self.shape_out)
         self.force_shape = force_shape
 
     # DEFINED BY BASES CLASS #####
@@ -40,11 +46,11 @@ class Operator(ABC):
     def __call__(self, q):
         # For convenience, I don't enforce exact shaping (e.g. (500, 10) is same as (50, 10, 10)). 
         # This makes things like tensor products and contractions way less of a pain in the ass.
-        self._debug('matvec, input shape = ', q.shape, 'operator shape = ', self.shape_in, '->', self.shape_out) # nop unless debug set (so no slowdown at all)
-        if not self.force_shape:
-            return self._matvec(q)
-        q = q.reshape(self.shape_in)
-        return self._matvec(q).reshape(self.shape_out)
+        self._debug('matvec, input shape = ', _safe_shape(q), 'operator shape = ', self.shape_in, '->', self.shape_out) # nop unless debug set (so no slowdown at all)
+#        if not self.force_shape:
+#            return self._matvec(q)
+        q = _safe_reshape(q, self.shape_in)
+        return _safe_reshape(self._matvec(q), self.shape_out)
 
     # shape_out -> shape_in
     @torch.no_grad
@@ -52,8 +58,8 @@ class Operator(ABC):
         self._debug('rmatvec, input shape = ', q.shape, 'operator.T shape = ', self.shape_out, '->', self.shape_in) # nop unless debug set (so no slowdown at all)
         if not self.force_shape:
             return self._rmatvec(q)
-        q = q.reshape(self.shape_out)
-        return self._rmatvec(q).reshape(self.shape_in)
+        q = _safe_reshape(q, self.shape_out)
+        return _safe_reshape(self._rmatvec(q), self.shape_in)
 
     # [..., *shape_in] -> [..., *shape_out] if batch_first
     # [*shape_in, ...] -> [*shape_out, ...] otherwise
@@ -188,6 +194,10 @@ class Operator(ABC):
             dims.append(self.effdim(keep_dim, **effdim_kwargs))
         return tuple(dims)
 
+    # Alisases.
+    effrank = effdim 
+    effranks = effdims
+
     def gram(self):
         return GramOperator(self) # self @ self.T
 
@@ -227,7 +237,9 @@ class Operator(ABC):
             return nm
 
         # Roll back to atol if both operators are close to zero.
-        return nm / max(atol, self.fro_norm(nsamp = nsamp), op2.fro_norm(nsamp = nsamp))
+        nm1, nm2 = self.fro_norm(nsamp = nsamp), op2.fro_norm(nsamp = nsamp)
+        print(nm, nm1, nm2)
+        return nm / max(atol, nm1, nm2)
 
     def set_debug(self, val = True):
         if val:
@@ -272,6 +284,9 @@ class Operator(ABC):
         return AffineTransformedOperator(self, scale = np_to_torch(x))
     __rmul__ = __mul__
 
+    # Output of op is shape [n1, n2, ..., nk], now it shape [nk, ..., n2, n1]
+    def reverse_output(self):
+        return ReversedOutputOperator(self)
 
 class IdentityOperator(Operator):
     def __init__(self, shape, dev = 'cpu'):
@@ -367,7 +382,7 @@ class MatrixWrapper(Operator): # Just a normal matrix
 class OperatorView(Operator):
     def __init__(self, op, new_shape_in, new_shape_out):
 #        assert (prod(new_shape_in) == prod(op.shape_in) and prod(new_shape_out) == prod(op.shape_out)), f"Can't create a view from shapes {op.shapes} to (new_shape_in, new_shape_out)"
-        super().__init__(new_shape_in, new_shape_out, op.dev, op.self_adjoint)
+        super().__init__(new_shape_in, new_shape_out, op.dev, op.self_adjoint, force_shape = op.force_shape)
         self.op = op
 
     def _matvec(self, q):
@@ -389,12 +404,12 @@ class NumpyWrapper(Operator):
 
     def _matvec(self, q):
         with torch.no_grad(): # Using numpy so why use grads.
-            torch_res = self.op(torch.from_numpy(q).to(self.op.dev))
+            torch_res = self.op(torch.from_numpy(q).to(self.op.dev).float())
             return torch_res.cpu().numpy()
 
     def _rmatvec(self, q):
         with torch.no_grad(): # Using numpy so why use grads.
-            torch_res = self.op.adjoint_call(torch.from_numpy(q).to(self.op.dev))
+            torch_res = self.op.adjoint_call(torch.from_numpy(q).to(self.op.dev).float())
             return torch_res.cpu().numpy()
 
     def __str__(self):
@@ -523,6 +538,24 @@ class TransposedOperator(Operator):
 
     def __str__(self):
         return f"{self.op}.T"
+
+
+class ReversedOutputOperator(Operator):
+    def __init__(self, op):
+        new_shape_out = op.shape_out[::-1]
+        super().__init__(op.shape_in, new_shape_out, op.dev, force_shape = op.force_shape)
+        self.op = op
+
+    def _matvec(self, q):
+        y = self.op(q)
+        return y.permute(*range(y.ndim - 1, -1, -1)).contiguous()
+
+    def _rmatvec(self, q):
+        q = q.permute(*range(q.ndim - 1, -1, -1)).contiguous()
+        return self.op.adjoint_call(q)
+
+    def __str__(self):
+        return f"rev_out({self.op})"
 
 # Given x, y tensors, defines the map q |-> <q, x>_F * y
 # This basically generalizes the outer product xy^T for vectors (1-tensors) x and y.
