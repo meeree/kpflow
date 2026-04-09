@@ -31,7 +31,7 @@ class FullJThetaOperator(Operator):
                 return functional_call(self.model, params, self.inputs)
 
         self.model = FnParamsOnly(model_dev, inputs)
-        self.params = {name: p.detach().clone().requires_grad_(True).to(dev) for name, p in model_f.named_parameters() if p.requires_grad}
+        self.params = dict(model_dev.named_parameters())
         self.vectorize = params_to_vec # Convert parameters to vectors.
         self.vjp_fn = vjp(self.model, self.params)[1]
 #        if dev !='cpu':
