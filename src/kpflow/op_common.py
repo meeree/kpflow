@@ -359,7 +359,7 @@ class MatrixWrapper(Operator): # Just a normal matrix
     def __init__(self, W, left_mul = True, dev = 'cpu'):
         shape_in, shape_out = W.T.shape if left_mul else W.shape
         super().__init__(shape_in, shape_out, dev, self_adjoint = False)
-        self.W = np_to_torch(W)
+        self.W = np_to_torch(W).to(dev).float()
         self.mul_fn = (lambda W, x : W @ x) if left_mul else (lambda W, x : x @ W)
         self.batched_mul_fn = (lambda W, x: (W @ x.swapaxes(0,1)).swapaxes(0,1)) if left_mul else (lambda W, x: x @ W) # note batching always is in dim 0, so need to swap for batching then swap back
         

@@ -48,9 +48,10 @@ def GetTask(nsamp, batch_size, shuffle = True):
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
     return dataset, dataloader
 
-WIDTHS   = [10, 50, 100, 200]
-DEPTHS   = [2, 6, 8, 12]
-GAINS    = [0.8, 0.9, 1.0, 1.1]
+WIDTHS   = (10**np.linspace(1, np.log10(400), 100)).astype(int).tolist() #[10, 50, 100, 200]
+DEPTHS   = np.arange(2, 21) # [2, 6, 8, 12]
+GAINS    = np.linspace(.3, 3, 10) # [0.8, 0.9, 1.0, 1.1]
+GAINS = [1.]
 BASE_LRS = [1e-3]
 SEEDS    = [0]
 grid = [
@@ -60,7 +61,7 @@ grid = [
 
 if __name__ == '__main__':
     nsamp, B = 10000, 1000
-    L, N = 20, 100
+    nepoch = 10000
 
     _, dataloader = GetTask(nsamp, B)
     test_dataset, _ = GetTask(5000, 5000)
@@ -76,7 +77,7 @@ if __name__ == '__main__':
 
         losses = []
         optim = torch.optim.Adam(model.parameters(), lr = lr)
-        for epoch in range(1000):
+        for epoch in range(nepoch):
             for inps, targs in dataloader:
                 optim.zero_grad()
                 y = model(inps)
@@ -90,11 +91,12 @@ if __name__ == '__main__':
                     y_test = model(test_inp)
                     guess = torch.sign(y_test)
                     acc_test = torch.mean((guess == test_targ).float())
-                    if acc_test > 0.95:
+                    if acc_test > 0.98:
                         break
 
-            if epoch == 999:
+            if epoch == nepoch - 1:
                 print("Could not reach target accuracy in epochs!")
+                config['invalid'] = True
 
         torch.save({'config': config, 'model': model.state_dict()}, f'data/sweep/model_L={L}_N={N}_g={gain}_lr={lr}_seed={seed}.pt')
 #        plt.plot(losses)

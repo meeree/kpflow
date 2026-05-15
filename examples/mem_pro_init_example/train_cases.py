@@ -26,7 +26,7 @@ path = f'data_lr={args.lr}/'
 ping_dir(path)
 task = CustomTaskWrapper('memory_pro', 500, use_noise = True, n_samples = 5000, T = 90)
 models = {
-    f'{path}/{args.optim}_rnn_mempro_nfps={nfps}_g={g}': 
+    f'{path}/augment_{args.optim}_rnn_mempro_nfps={nfps}_g={g}': 
         construct_model(g = g, fps = [torch.randn(size = (256,)) for _ in range(nfps)], dt = .7)
     for nfps in [0, 5] 
 }

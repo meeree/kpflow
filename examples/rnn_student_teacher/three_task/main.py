@@ -621,8 +621,15 @@ def bottom_row_figure():
     if len(train_cases) == 1:
         axes = [axes]
 
+    keep_pairs = {
+        'Win': [(0.5, 15), (1.5, 30), (2., 30)],
+ #       'W': [(0.5, 15), (1.5, 5), (1.5, 30), (2., 15)]
+        'W': [(0.5, 15), (1.5, 15), (2., 15)]
+    }
+
     for ax, train_case in zip(axes, train_cases):
         csv_paths = {}
+        pt_paths = {}
         for seed in seeds:
             for g in tqdm(g_values):
                 for input_rank in input_ranks:
@@ -631,6 +638,10 @@ def bottom_row_figure():
                     cfg.g = g
                     cfg.input_rank = int(input_rank)
                     cfg.train_case = train_case
+                    keep = keep_pairs[train_case]
+                    if (g, input_rank) not in keep:
+                        continue
+
 #                    if train_case == 'Win': #  Skip some
 #                        if g != 0.5:
 #                            continue 
@@ -640,13 +651,56 @@ def bottom_row_figure():
 #                            continue
 
                     csv_path = os.path.join("trained_models", f"{make_name(cfg)}_metrics.csv")
+                    pt_path = os.path.join("trained_models", f"{make_name(cfg)}.pt")
                     csv_paths[f"g={g},rx={cfg.input_rank}"] = csv_path
+                    pt_paths[f"g={g},rx={cfg.input_rank}"] = pt_path
                     if os.path.exists(csv_path):
                         continue
                     train_and_save(cfg, save_dir="trained_models")
-            
 
-        colors = [*plt.rcParams['axes.prop_cycle'].by_key()['color']]
+
+        effdims = []
+        for idx, (name, pt_path) in enumerate(pt_paths.items()):
+            payload = torch.load(pt_path, map_location="cpu")
+            cfg_dict = dict(payload["cfg"])
+            cfg = Config(**cfg_dict)
+            set_seed(cfg.seed)
+
+            task = TeacherStudentTask(cfg)
+            model = VanillaRNN(
+                input_dim=cfg.input_dim,
+                hidden_dim=cfg.hidden_dim,
+                output_dim=cfg.output_dim,
+                g=cfg.g,
+            ).to(cfg.device)
+            task.initialize_student(model)
+
+            model.load_state_dict(payload["model_state_dict"], strict=True)
+            model.eval()
+            x, y, h_teacher = task.sample_batch(200)
+            with torch.no_grad():
+                yhat, hs = model(x)
+
+
+            def project(data):
+                from sklearn.decomposition import PCA
+                data_flat = data.reshape((-1, data.shape[-1]))
+                ncomp = min(data_flat.shape)
+                pca = PCA(ncomp).fit(data_flat) 
+                return pca, pca.transform(data_flat).reshape((*data.shape[:-1], ncomp))
+
+            def effdim(data_):
+                data = data_.detach().cpu().numpy()
+                pca, proj = project(data)
+                r = pca.explained_variance_ratio_
+                return np.argmax(np.cumsum(pca.explained_variance_ratio_) > .95) + 1 # Explain 95% of variance.
+
+            effdims.append(effdim(hs))
+
+        ax.plot(effdims)
+        continue
+            
+        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
         for idx, (name, csv_path) in enumerate(csv_paths.items()):
             df = pd.read_csv(csv_path)
             steps = df["step"].to_numpy()

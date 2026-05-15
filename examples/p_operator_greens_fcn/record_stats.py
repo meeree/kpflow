@@ -39,6 +39,8 @@ files = glob.glob('data/sweep/model*.pt')
 print('Computing analysis statistics and saving them to data files.')
 for fl in tqdm(files):
     ld = torch.load(fl)
+#    plt.imshow(ld['ftle'].reshape((50,50)))
+#    plt.show()
     config, sd = ld['config'], ld['model']
     L, N, gain, seed = config['depth'], config['width'], config['gain'], config['seed']
 
@@ -67,7 +69,7 @@ for fl in tqdm(files):
     if 'kern_align' not in ld.keys():
         ntk_0, ntk_f = NTK(model_0_all, inps, hidd_0), NTK(model_f_all, inps, hidd_f)
         kern_align = ntk_f.alignment(ntk_0, nsamp = 50)
-        ld['kern_align'] = kern_align.item()
+        ld['kern_align'] = kern_align
 
     # Representation Alignment.
     if 'rep_align' not in ld.keys():

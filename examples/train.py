@@ -83,14 +83,51 @@ def max_effective_lr_adam(optimizer, eps_floor=1e-16):
 
     return max_eff, min_eff
 
+def effdim(data):
+    data_flat = data.reshape((-1, data.shape[-1]))
+    mat = data_flat.T @ data_flat / data_flat.shape[0]
+    return np.trace(mat)**2 / np.trace(mat @ mat)
 
-def train(args, task=None, model=None):
+def augment(inputs, nfeats = 3):
+    freqs = torch.linspace(1., 10., nfeats).to(inputs.device)
+    times = 2 * np.pi * torch.linspace(0., 1., inputs.shape[1]).to(inputs.device)
+    feats = torch.cos(freqs[None, :] * times[:, None]) # [n_t, nfeats]
+    feats2 = torch.zeros_like(feats)
+    window = feats.shape[0] // nfeats
+    feats3 = []
+    for window in [30, 5, 10, 20, 30, 60]:
+        inc = feats.shape[0] // window 
+        for idx, off in enumerate(range(0, feats.shape[0], inc)):
+            f = torch.zeros(feats.shape[0])
+            f[off: off +inc] = 1.
+            feats3.append(f)
+
+    feats3 = torch.stack(feats3, 1).to(inputs.device)
+    feats3 = torch.cat((feats, feats3), -1)
+
+    stim1 = inputs[:, 0, 1]
+    feats_batched = stim1[:, None, None] * feats3[None] # [n_x, n_t, nfeats]
+    feats_batched = torch.ones_like(stim1[:, None, None]) * feats3[None]
+    new_inps = torch.cat([inputs, feats_batched], -1)
+    print(new_inps.shape[-1])
+    print(effdim(inputs), effdim(new_inps))
+    return new_inps
+
+def train(args, task=None, model=None, out_chan=0):
     torch.manual_seed(0)
     np.random.seed(0)
     if task is None:
         task = CustomTaskWrapper(args.task_str, 500, use_noise = not args.no_input_noise, n_samples = 5000, T = args.duration)
     inputs, targets = task()
+    n_in_no_aug = int(inputs.shape[-1])
+#    inputs = augment(inputs)
+    n_aug = inputs.shape[-1] - n_in_no_aug
     n_in, n_out = inputs.shape[-1], targets.shape[-1]
+
+#    Win = model.rnn.weight_ih_l0
+#    Waug_data = torch.rand(Win.shape[0], n_aug)
+#    Waug_data *= (Win.norm() / Waug_data.norm())
+#    Win.data = torch.cat((Win.data, Waug_data.to(Win.device)), -1)
 
     losses_all = []
 
@@ -100,6 +137,11 @@ def train(args, task=None, model=None):
     model_type = {'gru': nn.GRU, 'rnn': nn.RNN, 'basic_rnn': BasicRNN}[args.model]
     if model is None:
         model = Model(input_size = n_in, output_size = n_out, rnn=model_type, hidden_size = 256)
+
+#    hidden = model(inputs)[1]
+#    V = torch.cat((hidden, inputs), -1)
+#    print('V dim', effdim(V.detach()))
+#    ajsoidsadj
 
     # Scale inital weights.
     for name, param in model.named_parameters():
@@ -115,14 +157,11 @@ def train(args, task=None, model=None):
     loss_fn = nn.MSELoss()
     losses = []
 
-    task_test = CustomTaskWrapper(args.task_str, 50, use_noise = False, n_samples = 50, T = args.duration) # Uniform inputs without randomization.
-    inputs_test = task_test()[0]
-
-
     if args.wandb != '':
         import wandb
         wandb_config = vars(args)
         wandb.init(project = args.wandb, config = wandb_config)
+
 
     model = model.to(device)
     path = f'{args.task_str}_{args.model}_init={args.init_level}/' if not args.save_dir else args.save_dir
@@ -146,15 +185,15 @@ def train(args, task=None, model=None):
     for itr in pbar:
         inputs, targets = task()
         inputs, targets = inputs.to(device), targets.to(device)
+#        inputs = augment(inputs)
 
         optim.zero_grad()
-        out = model(inputs)[0]
+        out = model(inputs)[out_chan] if out_chan is not None else model(inputs) # No output channel, use whole thing.
 
         loss = loss_fn(out, targets)
         loss.backward()
         if args.grad_clip is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-        optim.step()
 
         if start_loss is None:
             start_loss = loss.item()
@@ -171,7 +210,9 @@ def train(args, task=None, model=None):
             if args.wandb != '':
                 max_lr, min_lr = max_effective_lr_adam(optim)
                 grad_sq = sum((p.grad**2).sum() for p in model.parameters())
-                log_entry = {"loss": losses[-1], 'grad_norm': grad_sq ** .5, 'max_lr': max_lr, 'min_lr': min_lr}
+#                Win_aug = model.rnn.weight_ih_l0
+#                Win, Waug = Win_aug[:, :-n_aug], Win_aug[:, -n_aug:]
+                log_entry = {"loss": losses[-1], 'grad_norm': grad_sq ** .5, 'max_lr': max_lr, 'min_lr': min_lr}#, 'Win_norm': Win.data.norm(), 'Waug_norm': Waug.data.norm()}
                 wandb.log(log_entry)
 
         if done or itr % args.save_freq == 0:
@@ -191,6 +232,8 @@ def train(args, task=None, model=None):
 #
 #            eigs = torch.linalg.eigvals(H_matrix).real
 #            print(f'Hessian eigs min max: {eigs.min():.3e}, {eigs.max():.3e}')
+
+        optim.step()
 
         if done:
             break

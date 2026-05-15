@@ -8,7 +8,7 @@ def project(data):
     pca = PCA(ncomp).fit(data_flat) 
     return pca, pca.transform(data_flat).reshape((*data.shape[:-1], ncomp))
 
-def effdim(data_, center = True):
+def effdim(data_, center = False):
     data = torch_to_np(data_)
     if center: # PCA (center the data first):
         pca, proj = project(torch_to_np(data))
@@ -19,6 +19,7 @@ def effdim(data_, center = True):
     data_flat = data.reshape((-1, data.shape[-1]))
     mat = data_flat.T @ data_flat / data_flat.shape[0]
     return np.trace(mat)**2 / np.trace(mat @ mat)
+
 
 def ping_dir(directory, clear = False):
     # Check if directory exists and make if not. If clear flag is True, clear any contents of the directory if it exists.

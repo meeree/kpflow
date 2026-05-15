@@ -16,7 +16,7 @@ from trace_methods import *
 
 import sys, os
 sys.path.append('../')
-from common import set_mpl_defaults, ping_dir, annotate_subplots
+from common import set_mpl_defaults, ping_dir, annotate_subplots, plot_err_bar
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Perform timing on trace estimation methods described in main paper.')
@@ -161,7 +161,7 @@ def plot_results(model):
         plt.fill_between(nsamps, q25, q75, facecolor = color, label = '_nolabel_', alpha = .5)
 
     plt.axhline(ref, color = 'black', zorder = -1, alpha = .5, linestyle = 'dashed', label = 'True')
-    plt.title('Trace Estimate')#, $t$')
+    plt.ylabel('Trace Estimate')#, $t$')
     plt.xlabel('# of Samples, $m$')
     plt.xscale('log')
     plt.grid(True, alpha = 0.25)
@@ -215,15 +215,6 @@ def plot_results(model):
     annotate_subplots()
     plt.tight_layout()
 
-def plot_err_bar(xdata, data, percentile_range, color, label = '', alpha = .5):
-    # Assume samples are in in axis 0.
-    median = np.nanmedian(data, axis=0)               
-    qmin = np.percentile(data, 50 - percentile_range, axis=0)            
-    qmax = np.percentile(data, 50 + percentile_range, axis=0)
-
-    plt.plot(xdata, median, label = label, color = color)
-    plt.fill_between(xdata, qmin, qmax, facecolor = color, label = '_nolabel_', alpha = .5)
-
 def plot_speedup():
     set_mpl_defaults(15) # Pretty matplotlib plots.
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
@@ -276,9 +267,9 @@ def plot_extras():
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
     data_runs = {
-        'Norm': np.load('data/special_terms/ret_norm.npy', allow_pickle = True).item(),
-        'Alignment': np.load('data/special_terms/ret_cos.npy', allow_pickle = True).item(),
-        'Effective Rank': np.load('data/special_terms/ret_effrank.npy', allow_pickle = True).item()
+        'Squared Norm\n$\\|\\text{NTK}_f\|_F^2$': np.load('data/special_terms/ret_norm.npy', allow_pickle = True).item(),
+        'Alignment\n$\\cos(\\text{NTK}_0, \\text{NTK}_f)$': np.load('data/special_terms/ret_cos.npy', allow_pickle = True).item(),
+        'Effective Rank\n$r_{eff}(\\text{NTK}_f)$': np.load('data/special_terms/ret_effrank.npy', allow_pickle = True).item()
     }
     plt.figure(figsize = (4*3*1.2, 3*1*1.2))
     for idx, (name, data_run) in enumerate(data_runs.items()):
@@ -330,7 +321,7 @@ def plot_extras():
 #        plt.title(f'{model.upper()} Model (n={my_n})')
 
     annotate_subplots()
-    plt.suptitle('Estimating Related Terms (n=5.12k)')
+#    plt.suptitle('Estimating Related Terms (n=5.12k)')
     plt.tight_layout()
 
 

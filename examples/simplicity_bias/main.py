@@ -4,7 +4,7 @@ from kpflow.architecture import Model, get_cell_from_model
 from kpflow.parameter_op import ParameterOperator, JThetaOperator
 from kpflow.propagation_op import PropagationOperator_DirectForm, PropagationOperator_LinearForm
 from kpflow.grad_op import HiddenNTKOperator
-from kpflow.op_common import AveragedOperator, Operator
+from kpflow.op_common import Operator
 
 import torch
 from torch import nn
@@ -20,7 +20,7 @@ import glob, re
 import sys
 sys.path.append('../')
 
-from common import project, plot_trajectories, compute_svs, set_mpl_defaults, plot_traj_mempro, imshow_nonuniform, effdim
+from common import project, plot_trajectories, compute_svs, set_mpl_defaults, plot_traj_mempro, imshow_nonuniform, effdim, skree_plot
 
 from tqdm import tqdm
 
@@ -60,7 +60,7 @@ def predict_rank_K(hidden, inps):
 def parse_arguments(parser = None):
     parser = argparse.ArgumentParser(description='Analyze Model on Memory Pro Task') if parser is None else parser
     parser.add_argument('--model', default='gru', type = str, help='Model to use')
-    parser.add_argument('--task_str', default = 'memory_pro', type = str, help = 'Task to train on. Options: memory_pro, flip_flop, context_integration')
+    parser.add_argument('--task_str', default = 'low_rank_forecast', type = str, help = 'Task to train on. Options: memory_pro, flip_flop, context_integration')
     parser.add_argument('--save_dir', default = '', type = str, help = 'Directory where checkpoints were saved. Optional.')
     return parser.parse_args()
 
@@ -83,7 +83,7 @@ def get_operators(model, inputs, hidden, k=True, p=True, g=True):
         ops.append(HiddenNTKOperator(GetHidden(model), inputs, hidden))
     return (*ops,)
 
-def get_models_and_scales(args, n_in, n_out, nscales_default = 10):
+def get_models_and_scales(args, n_in, n_out, nscales_default = 11):
     models = []
     if args.save_dir == '':
         scales = np.linspace(0., 10.0, nscales_default) if args.model == 'gru' else np.linspace(0., 3.0, nscales_default)
@@ -160,22 +160,53 @@ if __name__ == '__main__':
         plt.plot(*wrap_inputs[:, 0, :].T, color = '#a4ff8aff', linestyle = 'dashed')
         plt.show()
 
-    plot_effranks_pipeline = False
+    plot_effranks_pipeline = True
     if plot_effranks_pipeline:
         models, scales = get_models_and_scales(args, n_in, n_out)
-        effdims = {'hidden': [], 'adjoint': [], 'input': [], 'target': [], 'delta_f': []}
+#        models, scales = models[1:2], scales[1:2]
+        print(scales)
+        effdims = {'hidden': [], 'adjoint': [], 'input': [], 'target': [], 'delta_f': [], 'err': [], 'delta_h': []}
         for scale, model in zip(tqdm(scales), models):
             hidden, adj, err = model.analysis_mode(inputs, targets)[:3]
             effdims['input'].append(effdim(inputs))
             effdims['target'].append(effdim(targets))
             effdims['hidden'].append(effdim(hidden))
             effdims['adjoint'].append(effdim(adj))
+            effdims['err'].append(effdim(err))
 
             cell = get_cell_from_model(model)
-            pop = PropagationOperator_LinearForm(cell, inputs, hidden)
             kop = ParameterOperator(cell, inputs, hidden)
-            delta_f = (kop @ pop.T())(err)
+            class GetHidden(nn.Module):
+                def __init__(self, net):
+                    super().__init__()
+                    self.net = net
+
+                def forward(self, x):
+                    return self.net(x)[1]
+
+            gop = HiddenNTKOperator(GetHidden(model), inputs, hidden)
+#            print(gop.effdims())
+            pop = PropagationOperator_LinearForm(cell, inputs, hidden)
+            delta_f = (kop @ pop.T)(err)
+            delta_h = (gop)(err)
             effdims['delta_f'].append(effdim(delta_f))
+            effdims['delta_h'].append(effdim(delta_h))
+
+#        skree_plot(project(hidden.detach().numpy())[0], 1, 3, 1)
+#        skree_plot(project(adj.detach().numpy())[0], 1, 3, 2)
+#        skree_plot(project(delta_f.detach().numpy())[0], 1, 3, 3)
+#
+#        plt.figure()
+#        plot_trajectories(project(hidden.detach().numpy())[1], 1, 3, 1)
+#        plot_trajectories(project(adj.detach().numpy())[1], 1, 3, 2)
+#        plot_trajectories(project(delta_f.detach().numpy())[1], 1, 3, 3)
+#
+#        plt.figure()
+#        plt.bar(['Hidden, $h$', 'Adjoint, $a$', 'Delta f, $\delta f$', 'Input, $x$', 'Target, $y^*$', 'Error, $err$'],
+#                [effdims['hidden'][0], effdims['adjoint'][0], effdims['delta_f'][0], effdims['input'][0], effdims['target'][0], effdims['err'][0]])
+#        plt.show()
+#
+
 
         plt.figure()
         plt.plot(scales, effdims['hidden'])
@@ -183,7 +214,9 @@ if __name__ == '__main__':
         plt.plot(scales, effdims['delta_f'])
         plt.plot(scales, effdims['input'])
         plt.plot(scales, effdims['target'])
-        plt.legend(['Hidden, $h$', 'Adjoint, $a$', 'Delta f, $\delta f$', 'Input, $x$', 'Target, $y^*$'])
+        plt.plot(scales, effdims['err'])
+        plt.plot(scales, effdims['delta_h'])
+        plt.legend(['Hidden, $h$', 'Adjoint, $a$', 'Delta f, $\delta f$', 'Input, $x$', 'Target, $y^*$', 'Error, $err$', 'Delta h, $\delta h$'])
         plt.ylabel('Effective Dimension')
         plt.xlabel('Initial Weight Scale, $g$')
         plt.show()
@@ -191,7 +224,7 @@ if __name__ == '__main__':
     plot_dim_ratios_phi = True
     if plot_dim_ratios_phi:
         scale = 8
-        if True:
+        if False:
             D_inps = np.linspace(1, 500, 20).astype(int)
             D_targs = np.linspace(1, 500, 20).astype(int)
             D_inp_targ = np.array(np.meshgrid(D_inps, D_targs))
@@ -206,32 +239,14 @@ if __name__ == '__main__':
                         param.data = param.data * scale
                 model.rnn.flatten_parameters()
                 hidden, adj, err = model.analysis_mode(sweep_inputs, sweep_targets)[:3]
-                gop, = get_operators(model, sweep_inputs, hidden, p=False, k=False)
 
                 kop, pop, gop = get_operators(model, sweep_inputs, hidden)
                 reduce_shape = (1, 1, hidden.shape[-1])
                 reduce_shape = (*hidden.shape[:-1], 1)
 
-                kop_stream = lambda x : kop.to_numpy()(x.reshape(kop.shape_in)).reshape(x.shape)
-                print(effdim_m_mc(kop_stream, hidden.shape[0]*hidden.shape[1], hidden.shape[2]))
-                print(kop.effdim(reduce_shape, nsamp = 100), predict_rank_K(hidden.detach().numpy(), sweep_inputs.detach().numpy()))
-                jdsaooisada
-
-#                s1, s2 = [], []
-#                for S in np.linspace(100, 3000, 5).astype(int):
-#                    rand_inps = torch.randn((S, *inputs.shape[:-1], 256)) * 1e-6
-#                    s1.append(effdim(kop.batched_call(rand_inps)))
-#                    s2.append(kop.effdim(reduce_shape, nsamp = S))
-#                plt.plot(s1)
-#                plt.plot(s2)
-#                plt.show()
-#                saoijdsadj
-#                dim_k.append(effdim(kop.batched_call(rand_inps)))
-#                dim_p.append(effdim(pop.batched_call(rand_inps)))
-#                dim_phi.append(effdim(gop.batched_call(rand_inps)))
-                dim_k.append(kop.effdim(reduce_shape, nsamp = 5))
-                dim_p.append(pop.effdim(reduce_shape, nsamp = 5))
-                dim_phi.append(gop.effdim(reduce_shape, nsamp = 5))
+#                dim_k.append(kop.effdim(reduce_shape, nsamp = 5))
+#                dim_p.append(pop.effdim(reduce_shape, nsamp = 5))
+#                dim_phi.append(gop.effdim(reduce_shape, nsamp = 5))
 
                 dim_h.append(effdim(hidden))
                 dim_adj.append(effdim(adj))

@@ -27,9 +27,6 @@ def parse_arguments(parser = None):
     parser.add_argument('--task_str', default = 'memory_pro', type = str, help = 'Task to train on. Options: memory_pro, flip_flop, context_integration')
     return parser.parse_args()
 
-def sine(t, A, f, phi=0.0):
-    return np.sin(2 * np.pi * f * (t + phi))  * A
-
 if __name__ == '__main__':
     args = parse_arguments()
     set_mpl_defaults(14)
