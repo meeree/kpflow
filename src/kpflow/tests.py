@@ -69,7 +69,7 @@ def test_linearized_propagation(plot = False):
 
     from kpflow.frechet_op import FrechetOperator
     from kpflow.op_common import IdentityOperator as Id
-    print("Check Pop Inverse if Frechet Operator:")
+    print("Check Pop Inverse if Frechet LinearOperator:")
     frech = FrechetOperator(model_f, 0.*x, hidden)
     err1 = (frech @ polf).compare(Id(hidden.shape)) 
     err2 = (polf @ frech).compare(Id(hidden.shape)) 
@@ -112,7 +112,7 @@ def test_operator_adjoints(plot = True, trials = 50):
 
         if plot:
             plt.plot(errs)
-            plt.title(f'{name} Operator')
+            plt.title(f'{name} LinearOperator')
             plt.xlabel('Random x, y Trial')
             if idx == 0:
                 plt.ylabel('Relative Error')
