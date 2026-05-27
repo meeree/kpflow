@@ -342,11 +342,11 @@ class JacobianOperator(LinearOperator):
 
         self.partial_f = partial_f
 
-        self.y, self.pushforward = torch.func.linearize(partial_f, active)
-        _, self.pullback = torch.func.vjp(partial_f, active)
-
         shape_in = ShapeSpec.from_tree(active)
-        shape_out = ShapeSpec.from_tree(self.y)
+        shape_out = ShapeSpec.from_tree(partial_f(active))
+
+        self.active = active
+        self.pushforward, self.pullback = None, None # Lazy init.
 
         if names is None:
             names = (f"arg{argnums}", "f")
@@ -355,9 +355,13 @@ class JacobianOperator(LinearOperator):
         super().__init__(shape_in, shape_out, **kwargs)
 
     def _matvec(self, v):
+        if self.pushforward is None:
+            _, self.pushforward = torch.func.linearize(self.partial_f, self.active)
         return self.pushforward(v)
 
     def _rmatvec(self, w):
+        if self.pullback is None:
+            _, self.pullback = torch.func.vjp(self.partial_f, self.active)
         return self.pullback(w)[0]
 
     def __str__(self):

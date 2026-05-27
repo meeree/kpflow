@@ -35,3 +35,48 @@ class GlobalConstraint(GeneralOperator):
         return self.state_jac(primals).inverse(solver=solver, solver_kwargs = solver_kwargs)
 
     greens = propagator
+
+    # State-space neural tangent kernel.
+    def ntk(self, primals, solver="neumann"):
+        theta_jac = self.param_jac(primals)
+        prop = self.propagator(primals, solver=solver)
+        return prop @ theta_jac @ theta_jac.T @ prop.T
+
+    # State-space Fisher information.
+    def fim(self, primals):
+        theta_jac = self.param_jac(primals)
+        prop = self.propagator(primals, solver=solver)
+        return theta_jac.T @ prop.T @ prop @ theta_jac
+
+class WeightBasedOutputGradient:
+    def __init__(self, B, T, O, S, h, Dhfo_h_kron_Iy, names=None):
+        self.B = B
+        self.T = T
+        self.O = O
+        self.S = S
+        self.h = h
+        self.Dhfo_h_kron_Iy = Dhfo_h_kron_Iy
+
+        if names is None:
+            names = ("W", "W_o")
+        self.names = names
+
+    def _rsolve_S(self, b):
+        if hasattr(self.S, "rsolve"):
+            return self.S.rsolve(b)
+        return self.S.T.solve(b)
+
+    def __call__(self, err):
+        # z = S^{-*} O^* err
+        z = self._rsolve_S(self.O.rmatvec(err))
+
+        # grad_W = (h \otimes I_a)^* B^* z
+        grad_W = weight_site_rmatvec(self.h, self.B.rmatvec(z))
+
+        # grad_Wo = - (D_h f_o · (h \otimes I_y))^* err
+        grad_Wo = -self.Dhfo_h_kron_Iy.rmatvec(err)
+
+        return (grad_W, grad_Wo)
+
+    def __str__(self):
+        return f"OutputGradient[{self.names[0]}, {self.names[1]}]"
