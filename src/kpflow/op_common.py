@@ -47,25 +47,24 @@ class BaseOperator(ABC):
         q = shape_in.reshape(q)
         return shape_out.reshape(fn(q))
 
-    def _batched_call_with_shapes(self, fn, q_batch, shape_in, shape_out, batch_call = None, randomness = 'different'):
+    def _batched_call_with_shapes(self, fn, q_batch, shape_in, shape_out, batch_call=None, randomness="different"):
         if not self.force_shape:
             if batch_call is not None:
                 return batch_call(q_batch)
             if self._vmap:
-                return torch.vmap(fn, in_dims = 0, out_dims = 0, randomness = randomness)(q_batch)
+                return torch.vmap(fn, in_dims=0, out_dims=0, randomness=randomness)(q_batch)
             return torch.stack([fn(qi) for qi in q_batch], 0)
 
-        batch_dims = shape_in.batch_dims(q_batch, self.batch_first)
-        q_nice = shape_in.flatten_batch(q_batch, self.batch_first)
+        q_nice, batch_dims = shape_in.flat_batch(q_batch)
 
         if batch_call is not None:
             res = batch_call(q_nice)
         elif self._vmap:
-            res = torch.vmap(fn, in_dims = 0, out_dims = 0, randomness = randomness)(q_nice)
+            res = torch.vmap(fn, in_dims=0, out_dims=0, randomness=randomness)(q_nice)
         else:
             res = torch.stack([fn(qi) for qi in q_nice], 0)
 
-        return shape_out.unflatten_batch(res, batch_dims, self.batch_first)
+        return shape_out.unflat_batch(res, batch_dims)
 
     # shape_in -> shape_out
 #    @torch.no_grad
@@ -277,7 +276,6 @@ class LinearOperator(BaseOperator):
 
         # Roll back to atol if both operators are close to zero.
         nm1, nm2 = self.fro_norm(nsamp = nsamp), op2.fro_norm(nsamp = nsamp)
-        print(nm, nm1, nm2)
         return nm / max(atol, nm1, nm2)
 
     def set_debug(self, val = True):
@@ -289,7 +287,7 @@ class LinearOperator(BaseOperator):
     @classmethod
     def toggle_vmap(cls, val = None):
         val = val if val is not None else (not cls._vmap)
-        cls._vmap = val
+        setattr(LinearOperator, '_vmap', val)
 
     # BASIC OPERATIONS:
 
@@ -480,6 +478,23 @@ class MatrixWrapper(LinearOperator): # Just a normal matrix
     def __str__(self):
         return f"mat({tuple(self.W.shape)})" 
 
+class WeightSiteOperator(LinearOperator):
+    """Map W to site @ W.T, with adjoint accumulating site outer products."""
+
+    def __init__(self, site, weight_shape, dev=None):
+        self.site = site
+        dev = site.device if dev is None else dev
+        super().__init__(weight_shape, (*site.shape[:-1], weight_shape[0]), dev=dev)
+
+    def _matvec(self, W):
+        return self.site @ W.T
+
+    def _rmatvec(self, da):
+        return torch.einsum("...m,...a->ma", da, self.site)
+
+    def __str__(self):
+        return f"site({tuple(self.site.shape)}) @ W.T"
+
 # Takes in flattened shape_in, shape_out.
 class OperatorView(LinearOperator):
     def __init__(self, op, new_shape_in, new_shape_out):
@@ -493,6 +508,26 @@ class OperatorView(LinearOperator):
 
     def _rmatvec(self, q):
         # [new_shape_in] -> [self.op.shape_out] -> call -> [self.op.shape_in] -> [new_shape_out].
+        return self.op.adjoint_call(q).reshape(self.shape_in.as_tuple())
+
+    def __str__(self):
+        return f"{self.op}.view({self.shape_in.as_tuple()}, {self.shape_out.as_tuple()})"
+
+class OperatorView(LinearOperator):
+    def __init__(self, op, new_shape_in, new_shape_out):
+        new_shape_in = ShapeSpec(new_shape_in)
+        new_shape_out = ShapeSpec(new_shape_out)
+        super().__init__(new_shape_in, new_shape_out, op.dev, op.self_adjoint, force_shape = op.force_shape)
+        self.op = op
+
+    def _matvec(self, q):
+        # [new_shape_in] -> [op.shape_in] -> op -> [op.shape_out] -> [new_shape_out]
+        q = q.reshape(self.op.shape_in.as_tuple())
+        return self.op(q).reshape(self.shape_out.as_tuple())
+
+    def _rmatvec(self, q):
+        # [new_shape_out] -> [op.shape_out] -> op^* -> [op.shape_in] -> [new_shape_in]
+        q = q.reshape(self.op.shape_out.as_tuple())
         return self.op.adjoint_call(q).reshape(self.shape_in.as_tuple())
 
     def __str__(self):

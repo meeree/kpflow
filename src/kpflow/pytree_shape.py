@@ -42,9 +42,25 @@ class ShapeSpec:
             for leaf in leaves
         ]
 
+    def numel(self):
+        n = 0
+        for shape in self.leaf_shapes:
+            leaf_n = 1
+            for d in shape:
+                leaf_n *= d
+            n += leaf_n
+        return n
+
     @staticmethod
     def _is_tensor_shape(x):
         return isinstance(x, tuple) and all(isinstance(v, int) for v in x)
+
+    def as_tuple(self):
+        assert self.is_tensor, (
+            "ShapeSpec.as_tuple() only works for single tensor shapes, "
+            "not pytree shapes."
+        )
+        return self.spec
 
     @classmethod
     def from_tree(cls, x):
