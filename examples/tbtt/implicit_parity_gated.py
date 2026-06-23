@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Temporal parity: BPTT, TBPTT, and exact-W Duhamel credit."""
+"""Delay response: BPTT, TBPTT, and exact-W Duhamel credit."""
 
 import argparse
 import sys
@@ -16,11 +16,11 @@ from tqdm.auto import trange
 from kpflow.op_common import LinearOperator
 
 
-def parity_batch(batch, T, device, event_probability):
-    events = torch.rand(batch, T, device=device) < event_probability
-    signs = (2 * torch.randint(0, 2, (batch, T), device=device) - 1).float()
-    x = (events * signs).unsqueeze(-1)
-    target = torch.where(events, signs, torch.ones_like(signs)).prod(dim=1, keepdim=True)
+def memory_batch(batch, T, device):
+    theta = 2.0 * torch.pi * torch.rand(batch, device=device)
+    target = torch.stack([torch.cos(theta), torch.sin(theta)], dim=-1)
+    x = torch.zeros(batch, T, 2, device=device)
+    x[:, 0] = target
     return x, target
 
 
@@ -29,12 +29,12 @@ class TanhParityRNN(nn.Module):
         super().__init__()
         self.hidden_size = hidden_size
         self.W = nn.Linear(hidden_size, hidden_size, bias=False)
-        self.W_in = nn.Linear(1, hidden_size, bias=False)
+        self.W_in = nn.Linear(2, hidden_size, bias=False)
         self.b = nn.Parameter(torch.zeros(hidden_size))
-        self.readout = nn.Linear(hidden_size, 1)
-        nn.init.orthogonal_(self.W.weight)
+        self.readout = nn.Linear(hidden_size, 2)
         with torch.no_grad():
-            self.W.weight.mul_(0.95)
+            self.W.weight.copy_(0.90 * torch.eye(hidden_size))
+            self.W.weight.add_(0.01 * torch.randn_like(self.W.weight))
 
     def step(self, h, x):
         return self.W(torch.tanh(h)) + self.W_in(x) + self.b
@@ -172,11 +172,11 @@ class DuhamelGreen(LinearOperator):
 def output_error(model, h, target):
     pred = torch.tanh(model.readout(h[:, -1]))
     loss = (pred - target).square().mean()
-    dz = 2.0 * (pred - target) * (1.0 - pred.square()) / target.shape[0]
+    dz = 2.0 * (pred - target) * (1.0 - pred.square()) / target.numel()
     error = torch.zeros_like(h)
     error[:, -1] = dz @ model.readout.weight
-    accuracy = (pred.sign() == target).float().mean()
-    return loss, error, accuracy
+    cosine = (pred * target).sum(-1).div(pred.norm(dim=-1) * target.norm(dim=-1) + 1e-8).mean()
+    return loss, error, cosine
 
 
 def local_surrogate_gradient(model, x, h, credit, target):
@@ -216,7 +216,7 @@ def bptt_step(model, optimizer, x, target, args):
     optimizer.zero_grad(set_to_none=True)
     pred, _ = model(x)
     loss = (pred - target).square().mean()
-    accuracy = (pred.sign() == target).float().mean()
+    accuracy = (pred * target).sum(-1).div(pred.norm(dim=-1) * target.norm(dim=-1) + 1e-8).mean()
     loss.backward()
     torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
     optimizer.step()
@@ -242,14 +242,16 @@ def train(args):
     for name in ("bptt", "tbtt", "duhamel"):
         model = TanhParityRNN(args.hidden_size).to(args.device)
         model.load_state_dict(base.state_dict())
-        states[name] = {"model": model, "optimizer": torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)}
+        lr = args.lr if name == "bptt" else args.operator_lr
+        momentum = args.momentum if name == "bptt" else args.operator_momentum
+        states[name] = {"model": model, "optimizer": torch.optim.SGD(model.parameters(), lr=lr, momentum=momentum, weight_decay=args.weight_decay)}
     history = {name: {"step": [], "loss": [], "accuracy": []} for name in states}
     args.out.mkdir(parents=True, exist_ok=True)
     t0 = time.perf_counter()
 
-    progress = trange(args.steps + 1, desc="parity compare", dynamic_ncols=True, file=sys.stdout, mininterval=1.0)
+    progress = trange(args.steps + 1, desc="delay response", dynamic_ncols=True, file=sys.stdout, mininterval=1.0)
     for step in progress:
-        x, target = parity_batch(args.batch, args.T, args.device, args.event_probability)
+        x, target = memory_batch(args.batch, args.T, args.device)
         metrics = {}
         for name, state in states.items():
             if name == "bptt":
@@ -287,10 +289,10 @@ def plot_results(states, history, args):
     for name, values in history.items():
         ax[0].semilogy(values["step"], values["loss"], label=name)
         ax[1].plot(values["step"], values["accuracy"], label=name)
-    ax[0].set_title("temporal parity loss")
+    ax[0].set_title("delay-response loss")
     ax[0].set_xlabel("step")
     ax[0].set_ylabel("MSE")
-    ax[1].set_title("parity accuracy")
+    ax[1].set_title("response cosine")
     ax[1].set_xlabel("step")
     ax[1].set_ylim(0, 1.02)
     for a in ax:
@@ -300,7 +302,7 @@ def plot_results(states, history, args):
     fig.savefig(args.out / "01_training_comparison.png", dpi=220)
     plt.close(fig)
 
-    x, target = parity_batch(args.eval_batch, args.T, args.device, args.event_probability)
+    x, target = memory_batch(args.eval_batch, args.T, args.device)
     fig, ax = plt.subplots(1, 3, figsize=(12, 3.5))
     for a, (name, state) in zip(ax, states.items()):
         with torch.no_grad():
@@ -308,7 +310,7 @@ def plot_results(states, history, args):
             acc = (pred.sign() == target).float().mean()
         a.scatter(target.cpu(), pred.cpu(), s=8, alpha=0.45)
         a.plot([-1.1, 1.1], [-1.1, 1.1], "k--", lw=1)
-        a.set_title(f"{name}, acc={float(acc):.3f}")
+        a.set_title(f"{name}, cosine={float(acc):.3f}")
         a.set_xlabel("target")
         a.set_ylabel("prediction")
         a.grid(True, alpha=0.3)
@@ -338,14 +340,16 @@ def parse_args():
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--quick", action="store_true")
-    p.add_argument("--T", type=int, default=40)
-    p.add_argument("--hidden-size", type=int, default=96)
-    p.add_argument("--batch", type=int, default=512)
-    p.add_argument("--steps", type=int, default=2000)
-    p.add_argument("--lr", type=float, default=3e-3)
+    p.add_argument("--T", type=int, default=12)
+    p.add_argument("--hidden-size", type=int, default=32)
+    p.add_argument("--batch", type=int, default=128)
+    p.add_argument("--steps", type=int, default=3000)
+    p.add_argument("--lr", type=float, default=5e-2, help="BPTT SGD learning rate.")
+    p.add_argument("--operator-lr", type=float, default=2e-3, help="TBPTT and Duhamel SGD learning rate.")
+    p.add_argument("--momentum", type=float, default=0.9)
+    p.add_argument("--operator-momentum", type=float, default=0.0)
     p.add_argument("--weight-decay", type=float, default=1e-5)
     p.add_argument("--grad-clip", type=float, default=1.0)
-    p.add_argument("--event-probability", type=float, default=0.12)
     p.add_argument("--tbtt-terms", type=int, default=2)
     p.add_argument("--duhamel-terms", type=int, default=2, help="Base plus one nonlinear insertion.")
     p.add_argument("--log-every", type=int, default=25)
