@@ -1,0 +1,16 @@
+{
+  "linear_base": {
+    "final_loss": 0.13426272571086884,
+    "final_rmse": 0.5181944370269775,
+    "final_cos": 0.6232640147209167,
+    "final_rho": 1.0499999523162842,
+    "insertions": 1
+  },
+  "residual_base": {
+    "final_loss": 0.13907957077026367,
+    "final_rmse": 0.5274079442024231,
+    "final_cos": 0.912162721157074,
+    "final_rho": 1.0499998331069946,
+    "insertions": 1
+  }
+}

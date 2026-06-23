@@ -161,7 +161,7 @@ class LinearOperator(BaseOperator):
         return eigsh(op_sp, k = ncomps, return_eigenvectors = False, tol = tol)[::-1]
 
     def trace(self, nsamp = 21):
-        from utils.trace_estimation import trace_hupp_op
+        from .utils.trace_estimation import trace_hupp_op
         return trace_hupp_op(self, nsamp = nsamp)
 
     def fro_norm(self, nsamp = 21):
@@ -266,8 +266,8 @@ class LinearOperator(BaseOperator):
     def full_matrix(self):
         # Note this functions should only be used when the operator is small enough to compute!
         flat = self.flatten()
-        mat = self.batched_call(torch.eye(flat.shape_in[0]))
-        return mat.squeeze().T
+        mat = self.batched_call(torch.eye(flat.shape_in[0], device=self.dev))
+        return mat.reshape(flat.shape_in[0], flat.shape_out[0]).T
 
     def compare(self, op2, nsamp = 21, method = 'rel', atol = 1e-8):
         nm = (self - op2).fro_norm(nsamp = nsamp)

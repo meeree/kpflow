@@ -1,6 +1,8 @@
 import torch
 from torch import nn
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from time import perf_counter
 
@@ -26,100 +28,74 @@ def relative_error(x, y):
     return absolute_error(x, y) /  max(np.abs(torch_to_np(x)).max(), np.abs(torch_to_np(y)).max())
 
 def test_linearized_propagation(plot = False):
-    # First, test on a linear ODE model, z_{n+1} = W * z_n + x(t). 
-    # This has dynamics z_n = Phi(n, 0) z_0 + sum_{i=1}^n Phi(n, i) x_i,
-    # where Phi(n, n0) = W^{n - n0}.
-    from kpflow.propagation_op import PropagationOperator_LinearForm as POLF
+    # Current equivalent of the old propagation operator test:
+    # for a linear RNN h_t = W h_{t-1} + x_t, the Green's operator
+    # (D_h F)^(-1) maps the input drive sequence to the hidden trajectory.
+    from kpflow.architecture import BasicRNN
 
-    B, T, H = 5, 20, 10 # Batch size, Timesteps, Hidden count.
-    x = torch.randn(B, T, H) * 1e-3 # Inputs.
-    W = torch.randn(10, 10) / (H**0.5)
-    model_f = lambda x, z: z @ W.T + x 
+    B, T, H = 5, 20, 10
+    x = torch.randn(B, T, H) * 1e-3
+    W = torch.randn(H, H) / (H**0.5)
+    rnn = BasicRNN(H, H, bias=False, linear=True)
+    with torch.no_grad():
+        rnn.cell.weight_hh.copy_(W)
+        rnn.cell.weight_ih.copy_(torch.eye(H))
 
-    # Simulate an example.
-    hidden = [torch.zeros((B, H))]
-    for t in range(T):
-        hidden.append(model_f(x[:, t], hidden[-1]).clone())
-    hidden = torch.stack(hidden[1:], 1) # [B, T, H]
+    hidden, _ = rnn(x)
 
     if plot:
         plt.plot(hidden[0, :, :])
         plt.show()
 
-    polf = POLF(model_f, 0.*x, hidden)
+    F = rnn.to_implicit(x, h=hidden, jacobians="analytic")
+    Dh = F.state_jac()
+    P = F.greens(solver="neumann", max_iter=T + 1, tol=1e-10)
 
     print(" ----- ")
-    print("Jacobian Matrices Relative Error:")
-    true_jac = torch.zeros((B, T, H, H))
-    true_jac[:, :] = W
-    print(relative_error(true_jac, polf.jacs))
-    print(" ----- ")
-
-    print("Fundamental Matrices Relative Error:")
-    true_U = torch.zeros((B, T+1, H, H))
-    for t in range(T+1):
-        true_U[:, t] = torch.linalg.matrix_power(W, t)
-    print(relative_error(true_U, polf.Us)) 
-    print(" ----- ")
-
-    print("Trajectory Reconstruction Relative Error:")
-    guess_z = polf(x) # Feeding x into the state-transition form should give perfect reconstruction since it's a linear ODE.
-    print(relative_error(guess_z, hidden)) 
-    print(" ----- ")
-
-    from kpflow.frechet_op import FrechetOperator
-    from kpflow.op_common import IdentityOperator as Id
-    print("Check Pop Inverse if Frechet LinearOperator:")
-    frech = FrechetOperator(model_f, 0.*x, hidden)
-    err1 = (frech @ polf).compare(Id(hidden.shape)) 
-    err2 = (polf @ frech).compare(Id(hidden.shape)) 
-    print(max(err1, err2)) 
+    print("Check D_hF inverse consistency:")
+    q = torch.randn_like(hidden)
+    inv_err = relative_error(Dh(P(q)), q)
+    print(inv_err)
+    assert inv_err < 1e-5
     print(" ----- ")
 
 def get_p_and_inv(model, inputs, hidden):
-    cell = get_cell_from_model(model)
-    pop = PropagationOperator_LinearForm(cell, inputs, hidden)
-    pop_inv = FrechetOperator(cell, inputs, hidden)
+    F = model.to_implicit(inputs, h=hidden)
+    pop_inv = F.state_jac()
+    pop = F.greens(solver="neumann", max_iter=inputs.shape[1] + 1, tol=1e-10)
     return pop, pop_inv
 
 
-def test_operator_adjoints(plot = True, trials = 50):
-    from kpflow.architecture import Model, get_cell_from_model
-    from kpflow.parameter_op import ParameterOperator, JThetaOperator
-    from kpflow.propagation_op import PropagationOperator_DirectForm, PropagationOperator_LinearForm
-    from kpflow.op_common import AveragedOperator, check_adjoint
+def _tree_inner(a, b):
+    return sum((a[k] * b[k]).sum() for k in a)
 
-    # Test that the adjoint_call of the operators is indeed the adjoint, i.e. that 
-    # <A x, y> = <x, A* y> for the parameter and propagation operators A.
 
-    B, T, H = 5, 20, 10 # Batch size, Timesteps, Hidden count.
-    model = Model(input_size = 3, output_size = 3, rnn=nn.GRU)
+def test_operator_adjoints(plot = False, trials = 10):
+    from kpflow.architecture import BasicRNN
 
-    inputs = torch.randn(B, T, 3)
-    out, hidden = model(inputs)
+    B, T, N_in, H = 4, 7, 3, 6
+    model = BasicRNN(N_in, H, bias=True)
+    inputs = torch.randn(B, T, N_in)
+    hidden, _ = model(inputs)
+    F = model.to_implicit(inputs, h=hidden, jacobians="analytic")
 
-    cell = get_cell_from_model(model)
-
-    plt.figure(figsize = (12, 3))
-    for idx, (name, struct) in enumerate(zip(['Direct P', 'Linearized P', 'K'], [PropagationOperator_DirectForm, PropagationOperator_LinearForm, ParameterOperator])):
-        op = struct(cell, inputs, hidden)
-        op_sp = op.to_scipy(hidden.shape, hidden.shape, dtype = float, can_matmat = False)
-
-        plt.subplot(1,3,1+idx)
-        t0 = perf_counter()
-        errs = check_adjoint(op_sp, trials = trials)
-        print(f'{name} compute time, {perf_counter() - t0}')
-
-        if plot:
-            plt.plot(errs)
-            plt.title(f'{name} LinearOperator')
-            plt.xlabel('Random x, y Trial')
-            if idx == 0:
-                plt.ylabel('Relative Error')
-
-    if plot:
-        plt.suptitle('0 = |<A x, y> - <x, A* y>| Check')
-        plt.tight_layout()
+    for name, op in [("state", F.state_jac()), ("parameter", F.param_jac())]:
+        errs = []
+        for _ in range(trials):
+            y = torch.randn_like(hidden)
+            if name == "state":
+                x = torch.randn_like(hidden)
+                lhs = (op(x) * y).sum()
+                rhs = (x * op.adjoint_call(y)).sum()
+            else:
+                theta = dict(model.cell.named_parameters())
+                x = {k: torch.randn_like(v) for k, v in theta.items()}
+                lhs = (op(x) * y).sum()
+                rhs = _tree_inner(x, op.adjoint_call(y))
+            errs.append((lhs - rhs).abs() / (lhs.abs() + rhs.abs() + 1.0))
+        err = torch.stack(errs).max().item()
+        print(f"{name} operator adjoint relative error:", err)
+        assert err < 1e-5
 
 def test_projector_partial_trace_effdim():
     # Make the projector |Y><X| for random matrices, X, Y of shape (m, n)
@@ -144,9 +120,100 @@ def test_projector_partial_trace_effdim():
 
 
 
+def _max_param_tree_error(a, b):
+    return max((a[k] - b[k]).abs().max().item() for k in a)
+
+
+def test_basic_rnn_matches_manual_rollout():
+    from kpflow.architecture import BasicRNN
+
+    torch.manual_seed(0)
+    B, T, N_in, N = 3, 5, 4, 6
+    model = BasicRNN(N_in, N, bias=True)
+    x = torch.randn(B, T, N_in)
+
+    hidden, _ = model(x)
+    h = torch.zeros(B, N)
+    manual = []
+    for t in range(T):
+        h = torch.tanh(h) @ model.cell.weight_hh.T + x[:, t] @ model.cell.weight_ih.T + model.cell.bias
+        manual.append(h)
+    manual = torch.stack(manual, 1)
+
+    err = (hidden - manual).abs().max().item()
+    print("BasicRNN manual rollout max error:", err)
+    assert err < 1e-6
+
+
+def test_basic_rnn_to_implicit_dream_syntax():
+    from kpflow.architecture import Model, BasicRNN
+
+    torch.manual_seed(1)
+    B, T, N_in, N, N_out = 2, 4, 3, 5, 2
+    model = Model(N_in, N, N_out, rnn=BasicRNN, bias=True)
+    x = torch.randn(B, T, N_in)
+    _, h = model(x)
+
+    implicit_model = model.to_implicit(x)
+    residual_err = implicit_model(implicit_model.example_tuple_inp).abs().max().item()
+    Dh = implicit_model.state_jac()
+    Dtheta = implicit_model.param_jac()
+    P = implicit_model.greens(solver="neumann", max_iter=T + 1, tol=1e-10)
+
+    w = torch.randn_like(h)
+    inverse_err = (Dh(P(w)) - w).abs().max().item()
+    print("to_implicit residual max error:", residual_err)
+    print("to_implicit inverse max error:", inverse_err)
+    print("to_implicit state shape:", Dh.shape_in, "->", Dh.shape_out)
+    print("to_implicit param shape:", Dtheta.shape_in, "->", Dtheta.shape_out)
+
+    assert residual_err < 1e-6
+    assert inverse_err < 1e-5
+
+
+def test_basic_rnn_analytic_jacobians_match_default_implicit():
+    from kpflow.architecture import BasicRNN
+
+    torch.manual_seed(2)
+    B, T, N_in, N = 2, 4, 3, 5
+    rnn = BasicRNN(N_in, N, bias=True)
+    x = torch.randn(B, T, N_in)
+    h, _ = rnn(x)
+
+    F_default = rnn.to_implicit(x, h=h)
+    F_analytic = rnn.to_implicit(x, h=h, jacobians="analytic")
+
+    Dh_default = F_default.state_jac()
+    Dh_analytic = F_analytic.state_jac()
+    Dtheta_default = F_default.param_jac()
+    Dtheta_analytic = F_analytic.param_jac()
+
+    dh = torch.randn_like(h)
+    w = torch.randn_like(h)
+    theta = dict(rnn.cell.named_parameters())
+    dtheta = {k: torch.randn_like(v) for k, v in theta.items()}
+
+    state_mv_err = (Dh_default(dh) - Dh_analytic(dh)).abs().max().item()
+    state_adj_err = (Dh_default.adjoint_call(w) - Dh_analytic.adjoint_call(w)).abs().max().item()
+    param_mv_err = (Dtheta_default(dtheta) - Dtheta_analytic(dtheta)).abs().max().item()
+    param_adj_err = _max_param_tree_error(Dtheta_default.adjoint_call(w), Dtheta_analytic.adjoint_call(w))
+
+    print("BasicRNN analytic state matvec max error:", state_mv_err)
+    print("BasicRNN analytic state adjoint max error:", state_adj_err)
+    print("BasicRNN analytic param matvec max error:", param_mv_err)
+    print("BasicRNN analytic param adjoint max error:", param_adj_err)
+
+    assert state_mv_err < 1e-6
+    assert state_adj_err < 1e-6
+    assert param_mv_err < 1e-6
+    assert param_adj_err < 1e-6
+
+
 if __name__ == '__main__':
+    test_basic_rnn_matches_manual_rollout()
+    test_basic_rnn_to_implicit_dream_syntax()
+    test_basic_rnn_analytic_jacobians_match_default_implicit()
     test_linearized_propagation()
     test_projector_partial_trace_effdim()
     test_operator_adjoints()
     plt.show()
-

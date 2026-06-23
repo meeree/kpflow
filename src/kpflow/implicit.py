@@ -10,41 +10,67 @@ from .op_common import GeneralOperator, JacobianOperator, WeightSiteOperator
 # or re-ordered. User specifies state and param index in tuple.
 class GlobalConstraint(GeneralOperator):
     # example_tuple_inp should be something like (h, theta, x)
-    def __init__(self, call, example_tuple_inp, state_idx=0, param_idx=1, **kwargs):
+    def __init__(self, call, example_tuple_inp, state_idx=0, param_idx=1, jacobians=None, **kwargs):
         self.state_idx = state_idx
         self.param_idx = param_idx
+        self.example_tuple_inp = example_tuple_inp
+        self.jacobians = {} if jacobians is None else dict(jacobians)
 
         shape_in = ShapeSpec.from_tree(example_tuple_inp)
         shape_out = ShapeSpec.from_tree(example_tuple_inp[state_idx])
 
         super().__init__(call, shape_in, shape_out, **kwargs)
 
-    def param_jac(self, primals):
-        return JacobianOperator(self, primals, argnums=self.param_idx, names=("theta", "F"))
+    def _override(self, name, primals, default):
+        op = self.jacobians.get(name)
+        if op is None:
+            return default()
+        is_op = any(hasattr(op, attr) for attr in ("adjoint_call", "rmatvec", "solve", "rsolve"))
+        return op(primals) if callable(op) and not is_op else op
 
-    def state_jac(self, primals):
-        return JacobianOperator(self, primals, argnums=self.state_idx, names=("h", "F"))
+    def _primals(self, primals):
+        return self.example_tuple_inp if primals is None else primals
 
-    def jacs(self, primals):
+    def param_jac(self, primals=None):
+        primals = self._primals(primals)
+        return self._override(
+            "param",
+            primals,
+            lambda: JacobianOperator(self, primals, argnums=self.param_idx, names=("theta", "F")),
+        )
+
+    def state_jac(self, primals=None):
+        primals = self._primals(primals)
+        return self._override(
+            "state",
+            primals,
+            lambda: JacobianOperator(self, primals, argnums=self.state_idx, names=("h", "F")),
+        )
+
+    def jacs(self, primals=None):
+        primals = self._primals(primals)
         return {
             "param": self.param_jac(primals),
             "state": self.state_jac(primals),
         }
 
-    def propagator(self, primals, solver="neumann", **solver_kwargs):
+    def propagator(self, primals=None, solver="neumann", **solver_kwargs):
+        primals = self._primals(primals)
         return self.state_jac(primals).inverse(solver=solver, solver_kwargs = solver_kwargs)
 
     greens = propagator
     green = propagator
 
     # State-space neural tangent kernel.
-    def ntk(self, primals, solver="neumann"):
+    def ntk(self, primals=None, solver="neumann"):
+        primals = self._primals(primals)
         theta_jac = self.param_jac(primals)
         prop = self.propagator(primals, solver=solver)
         return prop @ theta_jac @ theta_jac.T @ prop.T
 
     # State-space Fisher information.
-    def fim(self, primals, solver="neumann"):
+    def fim(self, primals=None, solver="neumann"):
+        primals = self._primals(primals)
         theta_jac = self.param_jac(primals)
         prop = self.propagator(primals, solver=solver)
         return theta_jac.T @ prop.T @ prop @ theta_jac
