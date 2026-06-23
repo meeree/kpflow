@@ -84,6 +84,13 @@ Useful outputs include:
 - summary.json
 - training_results.pt
 
+implicit_parity_gated.py
+
+- Command I ran
+python examples/tbtt/implicit_parity_gated.py \
+  --steps 2000 --snapshot-every 50 --log-every 25 \
+  --out examples/tbtt/figures_implicit_parity_compare_2k
+
 Suggested quick checks
 ----------------------
 

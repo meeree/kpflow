@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Temporal parity: exact BPTT, direct TBPTT, and one-insertion Duhamel."""
+"""Temporal parity: BPTT, TBPTT, and exact-W Duhamel credit."""
 
 import argparse
 import sys
@@ -24,34 +24,32 @@ def parity_batch(batch, T, device, event_probability):
     return x, target
 
 
-class GatedParityRNN(nn.Module):
+class TanhParityRNN(nn.Module):
     def __init__(self, hidden_size):
         super().__init__()
         self.hidden_size = hidden_size
-        self.W_f = nn.Linear(1, hidden_size)
-        self.U_f = nn.Linear(hidden_size, hidden_size, bias=False)
-        self.W_c = nn.Linear(1, hidden_size)
-        self.U_c = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.W = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.W_in = nn.Linear(1, hidden_size, bias=False)
+        self.b = nn.Parameter(torch.zeros(hidden_size))
         self.readout = nn.Linear(hidden_size, 1)
-        nn.init.constant_(self.W_f.bias, 1.5)
+        nn.init.orthogonal_(self.W.weight)
+        with torch.no_grad():
+            self.W.weight.mul_(0.95)
 
     def step(self, h, x):
-        forget = torch.sigmoid(self.W_f(x) + self.U_f(h))
-        candidate = torch.tanh(self.W_c(x) + self.U_c(h))
-        return forget * h + (1.0 - forget) * candidate, forget
+        return self.W(torch.tanh(h)) + self.W_in(x) + self.b
 
     def rollout(self, x):
         h = torch.zeros(x.shape[0], self.hidden_size, dtype=x.dtype, device=x.device)
-        hs, gates = [], []
+        hs = []
         for t in range(x.shape[1]):
-            h, gate = self.step(h, x[:, t])
+            h = self.step(h, x[:, t])
             hs.append(h)
-            gates.append(gate)
-        return torch.stack(hs, 1), torch.stack(gates, 1)
+        return torch.stack(hs, 1)
 
     def forward(self, x):
-        h, gates = self.rollout(x)
-        return torch.tanh(self.readout(h[:, -1])), h, gates
+        h = self.rollout(x)
+        return torch.tanh(self.readout(h[:, -1])), h
 
 
 def step_down(h):
@@ -62,46 +60,65 @@ def shift_up(h):
     return torch.cat([h[:, 1:], torch.zeros_like(h[:, :1])], 1)
 
 
-class IdentityGreen(LinearOperator):
-    """Exact Green's function for h_t - h_{t-1}=b_t."""
+class TanhStateJacobian(LinearOperator):
+    """D_h F for F_t=h_t-W tanh(h_{t-1})-W_in x_t-b."""
 
-    def __init__(self, shape, device):
-        super().__init__(shape, shape, dev=device)
-
-    def _matvec(self, b):
-        return torch.cumsum(b, dim=1)
-
-    def _rmatvec(self, b):
-        return torch.flip(torch.cumsum(torch.flip(b, [1]), dim=1), [1])
-
-
-class GatedStateJacobian(LinearOperator):
-    """D_h F for F_t=h_t-g(h_{t-1}, x_t), with hardcoded JVP/VJP."""
-
-    def __init__(self, h, x, model):
+    def __init__(self, h, model):
         self.h_prev = step_down(h)
-        self.x = x
         self.model = model
         with torch.no_grad():
-            self.forget = torch.sigmoid(model.W_f(x) + model.U_f(self.h_prev))
-            self.candidate = torch.tanh(model.W_c(x) + model.U_c(self.h_prev))
+            self.slope = 1.0 - torch.tanh(self.h_prev).square()
         super().__init__(h.shape, h.shape, dev=h.device)
 
     def jvp(self, dh):
-        df = self.forget * (1.0 - self.forget) * self.model.U_f(dh)
-        dc = (1.0 - self.candidate.square()) * self.model.U_c(dh)
-        return self.forget * dh + (self.h_prev - self.candidate) * df + (1.0 - self.forget) * dc
+        return self.model.W(dh * self.slope)
 
     def vjp(self, q):
-        df = q * (self.h_prev - self.candidate) * self.forget * (1.0 - self.forget)
-        dc = q * (1.0 - self.forget) * (1.0 - self.candidate.square())
-        return self.forget * q + df @ self.model.U_f.weight + dc @ self.model.U_c.weight
+        return (q @ self.model.W.weight) * self.slope
 
     def _matvec(self, dh):
         return dh - self.jvp(step_down(dh))
 
     def _rmatvec(self, q):
         return q - self.vjp(shift_up(q))
+
+
+class LinearStateJacobian(LinearOperator):
+    """D_h F for the linear base h_t-W h_{t-1}."""
+
+    def __init__(self, h, W):
+        self.W = W
+        super().__init__(h.shape, h.shape, dev=h.device)
+
+    def _matvec(self, dh):
+        return dh - self.W(step_down(dh))
+
+    def _rmatvec(self, q):
+        return q - shift_up(q) @ self.W.weight
+
+
+class LinearRNNGreen(LinearOperator):
+    """Exact block-Toeplitz Green's operator: (P b)_t=sum_d W^d b_{t-d}."""
+
+    def __init__(self, shape, W, device):
+        self.W = W
+        super().__init__(shape, shape, dev=device)
+
+    def _matvec(self, b):
+        values = []
+        prev = torch.zeros_like(b[:, 0])
+        for t in range(b.shape[1]):
+            prev = b[:, t] + self.W(prev)
+            values.append(prev)
+        return torch.stack(values, 1)
+
+    def _rmatvec(self, b):
+        values = [None] * b.shape[1]
+        nxt = torch.zeros_like(b[:, 0])
+        for t in range(b.shape[1] - 1, -1, -1):
+            nxt = b[:, t] + nxt @ self.W.weight
+            values[t] = nxt
+        return torch.stack(values, 1)
 
 
 class DirectGreen(LinearOperator):
@@ -126,22 +143,6 @@ class DirectGreen(LinearOperator):
             term = term - ST(term)
             out = out + term
         return out
-
-
-class GatedNonlinearPiece(LinearOperator):
-    """S_identity - S_full = shift((Dg - I) dh)."""
-
-    def __init__(self, state_jacobian):
-        self.J = state_jacobian
-        super().__init__(self.J.shape_in, self.J.shape_out, dev=self.J.dev)
-
-    def _matvec(self, dh):
-        prev = step_down(dh)
-        return self.J.jvp(prev) - prev
-
-    def _rmatvec(self, q):
-        future = shift_up(q)
-        return self.J.vjp(future) - future
 
 
 class DuhamelGreen(LinearOperator):
@@ -186,7 +187,7 @@ def local_surrogate_gradient(model, x, h, credit, target):
     for t in range(x.shape[1]):
         if t:
             prev = h[:, t - 1].detach()
-        next_h, _ = model.step(prev, x[:, t])
+        next_h = model.step(prev, x[:, t])
         surrogate = surrogate + (next_h * credit[:, t].detach()).sum()
     surrogate.backward()
     readout_loss = (torch.tanh(model.readout(h[:, -1].detach())) - target).square().mean()
@@ -195,14 +196,15 @@ def local_surrogate_gradient(model, x, h, credit, target):
 
 def operator_step(model, optimizer, x, target, method, args):
     with torch.no_grad():
-        h, _ = model.rollout(x)
+        h = model.rollout(x)
         loss, error, accuracy = output_error(model, h, target)
-        S = GatedStateJacobian(h, x, model)
+        S = TanhStateJacobian(h, model)
         if method == "tbtt":
             green = DirectGreen(S, args.tbtt_terms)
         else:
-            base = IdentityGreen(h.shape, h.device)
-            green = DuhamelGreen(base, GatedNonlinearPiece(S), args.duhamel_terms)
+            S_linear = LinearStateJacobian(h, model.W)
+            base = LinearRNNGreen(h.shape, model.W, h.device)
+            green = DuhamelGreen(base, S_linear - S, args.duhamel_terms)
         credit = green.T(error)
     local_surrogate_gradient(model, x, h, credit, target)
     torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
@@ -212,7 +214,7 @@ def operator_step(model, optimizer, x, target, method, args):
 
 def bptt_step(model, optimizer, x, target, args):
     optimizer.zero_grad(set_to_none=True)
-    pred, _, _ = model(x)
+    pred, _ = model(x)
     loss = (pred - target).square().mean()
     accuracy = (pred.sign() == target).float().mean()
     loss.backward()
@@ -235,10 +237,10 @@ def snapshot(path, states, history, step):
 
 def train(args):
     torch.manual_seed(args.seed)
-    base = GatedParityRNN(args.hidden_size).to(args.device)
+    base = TanhParityRNN(args.hidden_size).to(args.device)
     states = {}
     for name in ("bptt", "tbtt", "duhamel"):
-        model = GatedParityRNN(args.hidden_size).to(args.device)
+        model = TanhParityRNN(args.hidden_size).to(args.device)
         model.load_state_dict(base.state_dict())
         states[name] = {"model": model, "optimizer": torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)}
     history = {name: {"step": [], "loss": [], "accuracy": []} for name in states}
@@ -302,7 +304,7 @@ def plot_results(states, history, args):
     fig, ax = plt.subplots(1, 3, figsize=(12, 3.5))
     for a, (name, state) in zip(ax, states.items()):
         with torch.no_grad():
-            pred, _, gates = state["model"](x)
+            pred, _ = state["model"](x)
             acc = (pred.sign() == target).float().mean()
         a.scatter(target.cpu(), pred.cpu(), s=8, alpha=0.45)
         a.plot([-1.1, 1.1], [-1.1, 1.1], "k--", lw=1)
@@ -317,11 +319,12 @@ def plot_results(states, history, args):
     fig, ax = plt.subplots(figsize=(7, 3.5))
     for name, state in states.items():
         with torch.no_grad():
-            _, _, gates = state["model"](x[:16])
-        ax.plot(gates.mean((0, 2)).cpu(), label=name)
-    ax.set_title("mean forget gate over time")
+            _, h = state["model"](x[:16])
+            slope = 1.0 - torch.tanh(step_down(h)).square()
+        ax.plot(slope.mean((0, 2)).cpu(), label=name)
+    ax.set_title("mean tanh derivative over time")
     ax.set_xlabel("time")
-    ax.set_ylabel("forget gate")
+    ax.set_ylabel("tanh derivative")
     ax.grid(True, alpha=0.3)
     ax.legend(frameon=False)
     fig.tight_layout()
