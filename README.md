@@ -1,6 +1,6 @@
 ![Schematic of Pipeline from Error to State, z, Changes](poster/schematic_gd_flow.png)
 
-# *K*-*P* Flow:
+# The Global empirical Neural Tangent Kernel (GeNTK):
 Analysis of gradient descent learning in general recurrent models using operators
 
 See accompanying theory paper (soon to be updated with a full rewrite): https://arxiv.org/abs/2507.06381 and paper on the RNLA aspect of the code: https://arxiv.org/abs/2511.10796
